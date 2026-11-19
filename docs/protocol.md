@@ -122,21 +122,29 @@ decides when to transmit. Other implementations can do better and still interope
   every such neighbour gained one.
 - When a station hears a coded packet from a sender whose rank is above a neighbour's
   estimate, it assumes the neighbour heard it too and raises the estimate.
-- The originator starts with k + 2 packets of credit per generation, which it spends even with
-  no neighbours known. Relays get no blind credit by default.
-- Before a coded transmission a station waits a random time drawn from
-  `[0, backoff * window]` and divided by (1 + the largest deficit it can fill), so stations
-  that can help most go first. The TNC's own carrier sense then applies.
+- The originator starts with k + 2 packets of credit per generation. It sends them back to
+  back, with no neighbours known. Relays get no blind credit by default; if given some, they
+  spend it with the usual back-off.
+- Before a coded transmission that fills a neighbour's deficit, a station waits a random time
+  drawn from `[0, backoff * window]` and divided by (1 + the largest deficit it can fill), so
+  stations that can help most go first. The TNC's own carrier sense then applies.
 - An incomplete station that has heard nothing new for `quiet` seconds sends a status. It
   doubles that wait each time (capped at 8 times `quiet`). It gives up after 6 unanswered
   statuses, unless some neighbour it has heard is ahead of it. In that case it keeps asking
   at the capped rate until the message expires, because a lossy link to the one station
   that can help is exactly when asking matters.
+- The quiet timer and the repeat gaps are multiplied by a random factor between 0.75 and
+  1.25. Completion statuses and quick replies to a status are already spread over
+  `[0, backoff * window]`. Stations that heard the same frames would otherwise time out at
+  the same instant. On the bench, Direwolf sent
+  both receivers' statuses together every round, and they collided every time.
 - A station that hears a status showing a neighbour ahead of it replies with its own status
   soon, at most once per `quiet / 2`.
 - A station that completes a message sends a status, then repeats it 5 more times on the same
   doubling schedule. Neighbours stop sending to it, and a neighbour that missed everything
   learns the message exists.
+- The reference defaults, in units of one coded packet's airtime, are a back-off of 4, a
+  window of 10 and a quiet time of 20.
 - A station tracks at most 64 messages at once. It reserves decoding memory for a generation
   only when a coded packet for it arrives.
 - If a decoded message fails its hash check, a bad packet was mixed in. The station discards

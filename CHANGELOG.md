@@ -8,6 +8,28 @@ what appears on its GitHub release page. Validated in CI by
 
 ## [Unreleased]
 
+### Added
+
+- `uncoded` simulator strategy: the same protocol with coding switched off, using
+  per-generation bitmaps where the coded station uses ranks, so the simulator can measure
+  what coding itself saves.
+
+### Changed
+
+- The default back-off is 4 packet airtimes instead of 0.4. Over the simulator's sweep it
+  cut coded airtime by about 40% without slowing delivery on the default map.
+
+### Fixed
+
+- Stations that heard the same frames sent their status requests at the same instant, and
+  on a Direwolf bench they collided every time, so a message could stall. Status timers now
+  carry random jitter.
+- The originator's opening burst waited a random back-off before every frame, which doubled
+  delivery time on small networks for no benefit.
+- The simulator sensed a transmission the instant it began and always rolled `persist`.
+  It now gives carrier detect a tenth of a second to notice a frame and sends at once on a
+  clear channel, like Direwolf. The old model is what hid the status collisions.
+
 ## [0.1.0] - 2026-11-19
 
 ### Added
