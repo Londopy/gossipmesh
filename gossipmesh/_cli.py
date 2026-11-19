@@ -1,0 +1,164 @@
+import argparse
+import os
+import sys
+import time
+from pathlib import Path
+
+from . import __version__
+from ._message import check_call, load_signing_key
+from ._node import Link, SerialLink, TcpLink, run
+from ._sim import STRATEGIES, Scenario, compare, report
+from ._station import Delivery, Params, Station
+
+
+def _sim(args: argparse.Namespace) -> int:
+    sc = Scenario(
+        stations=args.stations,
+        area=args.area,
+        loss=args.loss,
+        baud=args.baud,
+        txdelay=args.txdelay,
+        size=args.size,
+        block=args.block,
+    )
+    strategies = tuple(args.strategy or STRATEGIES)
+    print(report(compare(sc, args.runs, args.seed, strategies)))
+    return 0
+
+
+def _call(text: str) -> str:
+    try:
+        return check_call(text)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(str(e)) from e
+
+
+def _trust(path: Path) -> dict[str, bytes]:
+    keys = {}
+    for n, line in enumerate(path.read_text().splitlines(), 1):
+        line = line.split("#")[0].strip()
+        if not line:
+            continue
+        try:
+            call, hexkey = line.split()
+            key = bytes.fromhex(hexkey)
+            if len(key) != 32:
+                raise ValueError("an Ed25519 public key is 64 hex digits")
+            keys[check_call(call)] = key
+        except ValueError as e:
+            raise SystemExit(f"{path}:{n}: expected 'CALLSIGN public-key-hex' ({e})") from e
+    return keys
+
+
+def _node(args: argparse.Namespace) -> int:
+    sc = Scenario(baud=args.baud, txdelay=args.txdelay, block=args.block)
+    params = Params.for_packet_time(sc.airtime(args.block + 40), block_size=args.block)
+    out: Path | None = args.out
+    if out:
+        out.mkdir(parents=True, exist_ok=True)
+
+    def delivered(d: Delivery) -> None:
+        env = d.envelope
+        sig = {True: "signature ok", False: "signature bad", None: "unsigned"}[d.verified]
+        if env.signature is not None and d.verified is None:
+            sig = "signed by an untrusted key"
+        print(f"{env.msg_id.hex()} from {env.originator}, {len(env.body)} bytes, {sig}", flush=True)
+        if out:
+            (out / f"{env.msg_id.hex()}.bin").write_bytes(env.body)
+
+    keys = _trust(args.trust) if args.trust else None
+    station = Station(args.call, params, keys=keys, on_deliver=delivered)
+    key = load_signing_key(args.key) if args.key else None
+    link: Link
+    if args.kiss:
+        host, _, port = args.kiss.rpartition(":")
+        link = TcpLink(host or "127.0.0.1", int(port))
+    else:
+        link = SerialLink(args.serial, args.serial_baud)
+    for f in args.send or []:
+        msg_id = station.originate(f.read_bytes(), time.time(), ttl=args.ttl, key=key)
+        print(f"{msg_id.hex()} sent from {f}", flush=True)
+    print(f"{station.call} listening", flush=True)
+    run(station, link, sc.airtime)
+    return 0
+
+
+def _keygen(args: argparse.Namespace) -> int:
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    path: Path = args.file
+    key = Ed25519PrivateKey.generate()
+    pem = key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    )
+    try:
+        # owner-only where the OS honours the mode, and never over an existing key
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        raise SystemExit(f"{path} already exists; not overwriting a key") from None
+    with os.fdopen(fd, "wb") as f:
+        f.write(pem)
+    public = key.public_key().public_bytes(
+        serialization.Encoding.Raw, serialization.PublicFormat.Raw
+    )
+    print(f"wrote {path}; share this line for other stations' trust files:")
+    print(f"{args.call} {public.hex()}")
+    return 0
+
+
+def _parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="gossipmesh", description="Network-coded gossip for packet radio."
+    )
+    p.add_argument("--version", action="version", version=f"gossipmesh {__version__}")
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    s = sub.add_parser("sim", help="compare coded gossip with flooding and routed forwarding")
+    s.add_argument("--stations", type=int, default=20)
+    s.add_argument("--area", type=float, default=3.0, help="map side, in units of radio range")
+    s.add_argument("--loss", type=float, default=0.1, help="packet loss inside range (0-1)")
+    s.add_argument("--baud", type=int, default=1200)
+    s.add_argument("--txdelay", type=float, default=0.3, help="seconds of key-up per frame")
+    s.add_argument("--size", type=int, default=10_000, help="message body in bytes")
+    s.add_argument("--block", type=int, default=128, help="payload bytes per packet")
+    s.add_argument("--runs", type=int, default=5)
+    s.add_argument("--seed", type=int, default=1)
+    s.add_argument("--strategy", action="append", choices=STRATEGIES)
+    s.set_defaults(func=_sim)
+
+    n = sub.add_parser("node", help="run a station against a KISS TNC")
+    n.add_argument("--call", required=True, type=_call, help="your callsign, e.g. N0CALL-1")
+    tnc = n.add_mutually_exclusive_group(required=True)
+    tnc.add_argument("--kiss", metavar="HOST:PORT", help="KISS over TCP, e.g. 127.0.0.1:8001")
+    tnc.add_argument("--serial", metavar="PORT", help="KISS over a serial port, e.g. COM3")
+    n.add_argument("--serial-baud", type=int, default=9600)
+    n.add_argument("--baud", type=int, default=1200, help="radio data rate, for pacing")
+    n.add_argument("--txdelay", type=float, default=0.3)
+    n.add_argument("--block", type=int, default=128)
+    n.add_argument("--send", type=Path, action="append", metavar="FILE", help="originate FILE")
+    n.add_argument("--ttl", type=float, default=3600, help="seconds until sent messages expire")
+    n.add_argument("--key", type=Path, help="Ed25519 private key (PEM) to sign with")
+    n.add_argument("--trust", type=Path, help="file of 'CALLSIGN public-key-hex' lines")
+    n.add_argument("--out", type=Path, help="directory to save received message bodies in")
+    n.set_defaults(func=_node)
+
+    k = sub.add_parser("keygen", help="make an Ed25519 signing key")
+    k.add_argument("file", type=Path)
+    k.add_argument("--call", required=True, type=_call)
+    k.set_defaults(func=_keygen)
+    return p
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parser().parse_args(argv)
+    try:
+        code: int = args.func(args)
+    except KeyboardInterrupt:
+        return 130
+    except (OSError, RuntimeError, ValueError) as e:
+        print(f"gossipmesh: {e}", file=sys.stderr)
+        return 1
+    return code
