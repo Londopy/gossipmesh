@@ -28,7 +28,12 @@ class Node(Protocol):
 
 @dataclass
 class Scenario:
-    """Stations on a square map. Distances are in units of radio range."""
+    """Stations on a square map. Distances are in units of radio range.
+
+    Channel access matches what Direwolf did on the bench: a station sends at once if the
+    channel is clear, and only rolls `persist` each `slot` after waiting for it. Carrier detect
+    needs `dcd` seconds to notice a transmission, so stations that key up together collide.
+    """
 
     stations: int = 20
     area: float = 3.0
@@ -37,6 +42,7 @@ class Scenario:
     txdelay: float = 0.3
     slot: float = 0.1
     persist: float = 0.25
+    dcd: float = 0.1
     size: int = 10_000
     block: int = 128
     limit: float = 6 * 3600
@@ -158,7 +164,17 @@ def _first_hop(tree: dict[int, int], src: int, dest: int) -> int:
 
 def run(strategy: str, sc: Scenario, pos: list[tuple[float, float]], rng: random.Random) -> Result:
     """Simulate one message from station 0 with CSMA, collisions and hidden stations."""
-    nodes = _build(strategy, sc, pos, rng)
+    return channel(strategy, _build(strategy, sc, pos, rng), sc, pos, rng)
+
+
+def channel(
+    strategy: str,
+    nodes: list[Node],
+    sc: Scenario,
+    pos: list[tuple[float, float]],
+    rng: random.Random,
+) -> Result:
+    """Run already-built stations on the shared channel until they go quiet."""
     n = len(nodes)
     nbrs = _neighbours(pos)
     loss = [[sc.loss_at(math.dist(pos[i], pos[j])) for j in range(n)] for i in range(n)]
@@ -166,6 +182,7 @@ def run(strategy: str, sc: Scenario, pos: list[tuple[float, float]], rng: random
     recent: list[tuple[int, float, float]] = []
     next_try = [0.0] * n
     busy_until = [0.0] * n
+    deferred = [False] * n
     frames, air, last_tx, t = 0, 0.0, 0.0, 0.0
 
     def refresh(i: int) -> None:
@@ -193,14 +210,19 @@ def run(strategy: str, sc: Scenario, pos: list[tuple[float, float]], rng: random
                     refresh(r)
             refresh(s)
             continue
-        if nodes[i].due() is None:
-            next_try[i] = math.inf
+        due = nodes[i].due()
+        if due is None or due > t:
+            next_try[i] = math.inf if due is None else due
+            deferred[i] = deferred[i] and due is not None
             continue
-        # a frame that starts at this same instant is not sensed yet, so both go and collide
-        sensed = [e for j, b, e in recent if (j == i or j in nbrs[i]) and b < t < e]
+        sensed = [
+            e for j, b, e in recent if (j == i or (j in nbrs[i] and b + sc.dcd <= t)) and b <= t < e
+        ]
         if sensed:
             next_try[i] = max(sensed)
-        elif rng.random() < sc.persist:
+            deferred[i] = True
+        elif not deferred[i] or rng.random() < sc.persist:
+            deferred[i] = False
             sent = nodes[i].transmit(t)
             if sent is None:
                 refresh(i)
