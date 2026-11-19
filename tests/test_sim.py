@@ -5,11 +5,12 @@ import pytest
 from gossipmesh import Params, Station
 from gossipmesh._ax25 import KissReader, kiss_wrap, parse_ui, ui_frame
 from gossipmesh._node import run
+from gossipmesh._baselines import UncodedNode
 from gossipmesh._sim import Scenario, channel, compare, place
 from gossipmesh._sim import run as simulate
 
 
-@pytest.mark.parametrize("strategy", ["coded"])
+@pytest.mark.parametrize("strategy", ["coded", "uncoded"])
 def test_reaches_every_station_on_a_small_map(strategy: str) -> None:
     sc = Scenario(stations=8, area=2.0, size=2000)
     rng = random.Random(4)
@@ -27,13 +28,11 @@ def test_receivers_that_hear_the_same_frames_do_not_ask_in_lockstep() -> None:
 
 
 @pytest.mark.slow
-def test_coded_beats_flooding_on_airtime_per_delivery() -> None:
-    coded, flood = compare(Scenario(), runs=3, seed=1, strategies=("coded", "flood"))
-    air = [
-        sum(r.airtime for r in rs) / max(1, sum(r.delivered for r in rs)) for rs in (coded, flood)
-    ]
-    assert sum(r.delivered for r in coded) == sum(r.stations for r in coded)
-    assert air[0] < air[1]
+def test_coding_saves_airtime_over_the_same_protocol_uncoded() -> None:
+    coded, uncoded = compare(Scenario(), runs=3, seed=1, strategies=("coded", "uncoded"))
+    for rs in (coded, uncoded):
+        assert sum(r.delivered for r in rs) == sum(r.stations for r in rs)
+    assert sum(r.airtime for r in coded) < 0.8 * sum(r.airtime for r in uncoded)
 
 
 class FakeTnc:
@@ -116,3 +115,17 @@ def test_later_station_hears_the_first_and_waits() -> None:
     a, b, listener = on_air([0.0], [0.5])
     assert [src for src, _ in listener.heard] == ["N0T0", "N0T1"]
     assert b.heard and a.heard, "neither may transmit over the other"
+
+
+def test_uncoded_resends_exactly_what_a_status_shows_missing() -> None:
+    params = Params(backoff=0.1, push_extra=0)
+    a = UncodedNode("N0AAA", [3], params, random.Random(1))
+    b = UncodedNode("N0BBB", [3], params, random.Random(2))
+    a.originate([b"a" * 16, b"b" * 16, b"c" * 16], 0.0)
+    pushed = [a.transmit(a.due() or 0.0) or b"" for _ in range(3)]
+    b.receive(pushed[0], "N0AAA", 1.0)
+    b.receive(pushed[2], "N0AAA", 1.0)
+    t = b.due() or 0.0
+    a.receive(b.transmit(t) or b"", "N0BBB", t)
+    resent = a.transmit(a.due() or 0.0) or b""
+    assert int.from_bytes(resent[18:20], "big") == 1

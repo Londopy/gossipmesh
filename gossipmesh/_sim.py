@@ -5,12 +5,12 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from ._baselines import FloodNode, RoutedNode
-from ._message import Envelope, split
+from ._baselines import FloodNode, RoutedNode, UncodedNode
+from ._message import Envelope, layout, split
 from ._station import Params, Station
 
 AX25_OVERHEAD = 20
-STRATEGIES = ("coded", "flood", "routed")
+STRATEGIES = ("coded", "uncoded", "flood", "routed")
 
 
 class Node(Protocol):
@@ -138,6 +138,11 @@ def _build(
         for n in coded[1:]:
             n.msg_id = coded[0].msg_id
         return list(coded)
+    if strategy == "uncoded":
+        gens = layout(len(packed), sc.block)
+        uncoded = [UncodedNode(c, gens, params, random.Random(rng.random())) for c in calls]
+        uncoded[0].originate(blocks, 0.0)
+        return list(uncoded)
     delay = params.backoff * params.window
     if strategy == "flood":
         flood = [FloodNode(c, len(blocks), delay, random.Random(rng.random())) for c in calls]
