@@ -41,6 +41,11 @@ class Params:
         return cls(backoff=0.4 * airtime, quiet=20 * airtime, **kw)
 
 
+def jittered(wait: float, rng: random.Random) -> float:
+    # stations that heard the same frames would otherwise all time out at the same instant
+    return wait * rng.uniform(0.75, 1.25)
+
+
 @dataclass
 class Delivery:
     envelope: Envelope
@@ -59,6 +64,7 @@ class _Msg:
     ranks: dict[str, list[int]] = field(default_factory=dict)
     heard: dict[str, float] = field(default_factory=dict)
     last_status: float = -math.inf
+    originated: bool = False
 
     def __post_init__(self) -> None:
         self.credit = [0.0] * len(self.gens)
@@ -113,6 +119,7 @@ class Station:
         gens = [Generation.from_blocks(b) for b in split(packed, header.block_size)]
         m = _Msg(header, gens, None, p.quiet, 0)
         m.credit = [k + p.push_extra for k in header.gens]
+        m.originated = True
         self._msgs[header] = m
         self.delivered[msg_id] = Delivery(env, now, True if key is not None else None)
         self._schedule(now)
@@ -174,7 +181,7 @@ class Station:
         if not gen.add(coeffs, np.frombuffer(pkt.payload, dtype=np.uint8)):
             return
         m.credit[pkt.gen] += self.params.forward
-        self._arm_status(m, now + self.params.quiet)
+        self._arm_status(m, now + jittered(self.params.quiet, self.rng))
         if m.complete:
             self._finish(m, now)
 
@@ -205,7 +212,7 @@ class Station:
     def _fresh_msg(self, h: Header, now: float) -> _Msg:
         gens = [Generation(k, h.block_size) for k in h.gens]
         p = self.params
-        return _Msg(h, gens, now + p.quiet, p.quiet, p.status_repeats)
+        return _Msg(h, gens, now + jittered(p.quiet, self.rng), p.quiet, p.status_repeats)
 
     def _arm_status(self, m: _Msg, at: float) -> None:
         m.next_status = at
@@ -236,12 +243,20 @@ class Station:
         if self._coded_at is not None:
             return
         best = max(
-            (self._wanted(m, g, now) for m in self._msgs.values() for g in range(len(m.gens))),
-            default=(0, 0),
+            (
+                (*self._wanted(m, g, now), m.originated)
+                for m in self._msgs.values()
+                for g in range(len(m.gens))
+            ),
+            default=(0, 0, False),
         )
-        if best[0] > 0:
+        wanted, need, originated = best
+        if wanted > 0:
             p = self.params
-            self._coded_at = now + p.backoff * self.rng.uniform(0, p.window) / (1 + best[1])
+            # the originator's opening push answers nobody, so it goes out back to back
+            push = originated and need == 0
+            delay = 0.0 if push else p.backoff * self.rng.uniform(0, p.window) / (1 + need)
+            self._coded_at = now + delay
 
     def _send_coded(self, now: float) -> bytes | None:
         choices = [
@@ -279,7 +294,7 @@ class Station:
         if m.complete:
             return
         m.status_left = self.params.status_repeats
-        at = now + m.status_wait
+        at = now + jittered(m.status_wait, self.rng)
         if soon and now - m.last_status >= self.params.quiet / 2:
             at = now + self.rng.uniform(0, self.params.backoff * self.params.window)
         m.next_status = at if m.next_status is None else min(m.next_status, at)
@@ -290,7 +305,7 @@ class Station:
         m.status_wait = min(m.status_wait * 2, self.params.quiet * 8)
         mine = m.mine()
         if m.status_left > 0 or (not m.complete and self._behind(m, mine)):
-            m.next_status = now + m.status_wait
+            m.next_status = now + jittered(m.status_wait, self.rng)
         else:
             m.next_status = None
         return encode(Status(m.header, bytes(mine)))
