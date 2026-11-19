@@ -27,7 +27,7 @@ class Params:
     block_size: int = 128
     forward: float = 0.0
     push_extra: int = 2
-    backoff: float = 0.6
+    backoff: float = 6.0
     window: float = 10.0
     quiet: float = 30.0
     neighbour_ttl: float = 600.0
@@ -38,7 +38,7 @@ class Params:
     @classmethod
     def for_packet_time(cls, airtime: float, **kw: Any) -> "Params":
         """Timers scaled to how long one coded packet takes on air."""
-        return cls(backoff=0.4 * airtime, quiet=20 * airtime, **kw)
+        return cls(backoff=4 * airtime, quiet=20 * airtime, **kw)
 
 
 def jittered(wait: float, rng: random.Random) -> float:
