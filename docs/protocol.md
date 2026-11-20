@@ -174,8 +174,17 @@ decides when to transmit. Other implementations can do better and still interope
 - Anyone can transmit coded packets for a message id. A bad packet costs a restart of that
   message at the stations that took it in. A determined jammer can keep this up; signatures
   only stop a forged message from being *accepted*.
-- Partial relays pay up to 32 bytes per packet for the coefficient vector. GF(2) vectors (4
-  bytes for 32 blocks) would cut that, at the cost of about 1.6 extra packets per generation.
+- Partial relays pay up to 32 bytes per packet for the coefficient vector. A seed cannot
+  stand in for it: a relay's packet is a random mix of packets it received, each itself a
+  mix, and the result is almost never the output of any seed (a relay one short of
+  complete finds a matching seed about once in 280 tries, and searching for one costs a
+  hash per try). Sending the seeds of the packets it mixed plus one mixing byte each costs
+  5 bytes per packet mixed, so with 32-block generations it only wins when a relay mixes six
+  packets or fewer, which also makes its packets less likely to help. On the
+  default simulated map the vectors cost 4.7% of all airtime beyond what seeds would, which
+  bounds what any compact form could save. Smaller generations shrink the vector. GF(2)
+  vectors (4 bytes for 32 blocks) would cut it further, at the cost of about 1.6 extra
+  packets per generation.
 
 ## Part 97 notes
 

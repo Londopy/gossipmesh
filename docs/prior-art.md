@@ -58,8 +58,6 @@ together with the engineering choices that go with that.
 
 - No amateur radio network-coding project was found. Related work covers FEC on AX.25 and
   delay-tolerant networking over AX.25.
-- **PACSAT** broadcast files as AX.25 UI frames with hole-fill requests and no coding. (Seen in
-  search summaries only.)
 - **HQFBP** (2025) does one-to-many ham and cubesat file broadcast with optional erasure coding.
   Which code it uses was not confirmed.
 - **OODC** (Tanjung et al., Sensors 2020) is LoRa with relays that recode and compressed
@@ -67,6 +65,44 @@ together with the engineering choices that go with that.
   https://pmc.ncbi.nlm.nih.gov/articles/PMC7602015
 - No erasure or network coding was found in Meshtastic or Reticulum. Reticulum fetches
   hash-identified parts on request. That is absence of evidence, not proof.
+
+## Packet BBS forwarding
+
+Amateur packet radio has moved messages between many stations since the 1980s, almost all of
+it over connected-mode AX.25 sessions between bulletin board systems.
+
+- **W0RLI and WA7MBL (MBL/RLI) BBSs**, mid-1980s. BBSs opened connected-mode sessions to each
+  other and pushed messages along routes set in each sysop's forward file. A bulletin carries
+  a BID; a BBS that already holds it answers "NO - Already have it", and a message with a
+  BID is not sent back to the station it came from. Messages without one can loop. FBB's documents still call this the "standard
+  MBL/RLI protocol". Unlike gossipmesh, every transfer is a routed session with an explicit
+  accept or reject.
+  https://discmaster.textfiles.com/file/10596/science%20library(b).zip/science%20library(b)/PACKET/MB1107.ZIP/BID.DOC
+- **Hierarchical addresses.** A message is addressed to a home BBS and region, such as
+  `SP WB9LOZ @ W6PW.#NCA.CA.USA.NOAM`, and BBSs route on the address against their forward
+  files (described in a 1996 introduction to packet radio). Bulletins go to a category and a distribution designator that
+  differs by region. Delivery depends on every sysop keeping a routing table current;
+  gossipmesh floods instead and needs no tables.
+  https://www.qsl.net/l/lu7did/docs/ax25/packet/part06.html
+- **F6FBB (FBB)**, from 1986 and still maintained. Batched forwarding: the sender proposes up
+  to five messages (type, sender, BBS, recipient, BID or MID, size), the receiver accepts,
+  rejects or defers each, and duplicates are refused at the proposal. The B flag adds
+  compressed forwarding (B1F). It is a negotiated, acknowledged transfer over a connection,
+  where gossipmesh sends without negotiating and receivers drop duplicates themselves.
+  https://www.qsl.net/pe1nmb/bbs/fbb/docfwpro.htm and https://www.qsl.net/lu3erx/docfwcom.html
+- **Winlink B2F**, 2000s to now. A later level of FBB's forwarding protocol, used by
+  Winlink, where clients connect to gateways that pass mail to a central server: a
+  hub-and-gateway email system, not a peer-to-peer flood. Details were not checked against
+  the specification, which could not be fetched; wl2k-go implements it.
+  https://github.com/la5nta/wl2k-go
+- **PACSAT Broadcast Protocol** (Price and Ward, about 1990). The closest amateur radio
+  prior art. A
+  satellite splits a file into AX.25 UI frames, each carrying a file id, a byte offset and a
+  CRC, and repeats them round robin. Any frame can be stored on its own, ground stations send
+  lists of holes, and the missing pieces go back into the broadcast. There are no ACKs. It
+  differs from gossipmesh in having one sender of plain blocks and in needing hole lists:
+  with coding, a station only has to say how many pieces it lacks, and any station can
+  supply them. https://www.ir3ip.net/iw3fqg/doc/pacsat.htm
 
 ## Patents
 

@@ -18,16 +18,17 @@ decodes once it holds enough independent mixes, whichever stations they came fro
 announce how much they hold, so they stop sending once everyone nearby has the message.
 After that, only a short beacon goes out every 5 to 10 minutes, for stations that join late.
 
-It has been tested in a simulator and on a bench of three Direwolf modems sharing a virtual
-audio cable. It has not been used on the air yet.
+It has been tested in a simulator and on a bench of three Direwolf modems at 1200 baud
+sharing a virtual audio cable. It has not been used on the air yet, and 9600 baud has only
+been simulated, never run on a modem.
 
 ```console
 $ gossipmesh sim --runs 10
-strategy  delivered  frames  airtime s  air/delivery s  median s  farthest s  quiet at s
-coded     190/190    1999    2726       143.5           1193      2185        3185
-uncoded   190/190    3070    4047       213.0           1773      2586        3548
-flood     0/190      389     550        -               -         -           399
-routed    105/190    13720   15818      1506.5          12001     20098       21599
+strategy  delivered  frames  airtime s  air/delivery s  median s  farthest s  quiet at s  heard/block
+coded     190/190    1999    2726       143.5           1193      2185        3185        1.54
+uncoded   190/190    3070    4047       213.0           1773      2586        3548        2.50
+flood     0/190      389     550        -               -         -           399         -
+routed    105/190    13720   15818      1506.5          12001     20098       21599       -
 ```
 
 ## What's here
@@ -83,8 +84,11 @@ The columns:
 - **airtime s:** total channel time used per run, all stations added up.
 - **air/delivery s:** airtime divided by stations reached.
 - **median s** and **farthest s:** time until a station decodes, and until the last one does.
-- **quiet at s:** when the last frame went out. The simulator turns beacons off, since every
-  simulated station is there from the start.
+- **quiet at s:** when the last frame went out. With coded gossip the gap after "farthest" is
+  completed stations repeating a short status a few times. The simulator turns beacons off,
+  since every simulated station is there from the start.
+- **heard/block:** data frames a station heard before it could decode, divided by the
+  number of blocks in the message. 1.00 would mean nothing was wasted.
 
 The comparison that matters is with **uncoded**. That is the same protocol with coding
 switched off: the same generations, timers, back-off and opening push. A data frame carries
@@ -122,15 +126,58 @@ station then waits about a quarter longer. These are simulator results
 from a guessed loss model, so treat the exact figures with suspicion; the bench test below
 checks the protocol itself, not the comparison.
 
-Plain flooding (each station repeats each block once, with no repair) used a fifth of
-coded's airtime but reached no station at all: with 79 blocks, losing any one of them means
-failure. Routed forwarding (one copy per destination along shortest paths, stop-and-wait ARQ
-per hop, routes given for free) used almost six times the airtime and reached 105 of 190
-stations before the 6-hour limit. After the last station decodes, completed stations repeat
-a short status a few times, which is the gap between "farthest" and "quiet at".
+### Against plain flooding
+
+Plain flooding is what Meshtastic does: each station repeats each block once, with no
+repair. On the default map it used a fifth of coded's airtime but reached no station at all:
+with 79 blocks, losing any one of them means failure. To see where flooding works, here is
+airtime per station reached on the default map, with the share of stations reached in
+brackets. `--loss` is the loss inside range; loss still rises toward the edge of range, and
+collisions still happen at 0. The 500-byte row is 30 runs per cell, the others 6.
+
+| Message | `--loss 0` | `--loss 0.02` | `--loss 0.05` | `--loss 0.1` |
+|---|---|---|---|---|
+| 500 bytes, 4 blocks, coded | 7.8 s (100%) | 8.0 s (97%) | 7.8 s (97%) | 8.6 s (97%) |
+| 500 bytes, 4 blocks, flood | 7.6 s (65%) | 8.0 s (61%) | 8.8 s (54%) | 9.7 s (47%) |
+| 2,000 bytes, 16 blocks, coded | 17.2 s (100%) | 17.0 s (100%) | 18.4 s (100%) | 19.1 s (100%) |
+| 2,000 bytes, 16 blocks, flood | 1,590 s (1%) | 1,584 s (1%) | none | none |
+| 10,000 bytes, 79 blocks, coded | 178 s (100%) | 191 s (100%) | 182 s (100%) | 154 s (100%) |
+| 10,000 bytes, 79 blocks, flood | none | none | none | none |
+
+For a message of a few blocks on a clean channel the two cost about the same per station
+reached, though flooding misses a third of the stations. From about 5% loss up, or from a
+couple of kilobytes up, coded gossip costs less per delivered message, and flooding soon
+delivers nothing at all. The coded misses in the 500-byte row are stations that heard no
+frame at all during the short opening burst, so never learned the message existed. On the
+air, beacons cover them; the simulator runs without beacons, and with them on, the same 30
+runs at 2% loss reach all 570 stations.
+
+### Routed forwarding
+
+Routed forwarding sends one copy per destination along shortest paths, with stop-and-wait
+ARQ per hop and routes given for free. On the default map it used almost six times coded's
+airtime and reached 105 of 190 stations before the 6-hour limit.
 
 At 9600 baud with 256-byte blocks, routed forwarding also reached every station, using
 almost nine times coded's airtime and taking 15 times as long. Flooding reached none.
+
+### How many packets it takes
+
+The design target was about K + 2 packets to decode K blocks. The code alone does better.
+Over 2,000 generations each of 8, 16 and 32 blocks, built from random seeded packets, a
+generation needed one extra packet 0.2% to 0.6% of the time and never two. On average that
+is about K + 0.004.
+
+On a network, stations hear more than they need, because several neighbours send at once and
+their mixes overlap. That is the heard/block column above: 1.54 for coded gossip on the
+default map, 2.50 for the same protocol uncoded, and 1.35 and 2.13 at 9600 baud.
+
+One part of the design could not be met as planned. Packets carry a 4-byte seed instead of
+their coefficients only when the sender holds the whole generation. A relay that has not
+decoded yet sends a mix of mixes, which a seed can almost never describe, so it sends the
+coefficient vector: up to 32 bytes. On the default map those vectors cost 4.7% of all airtime beyond
+what a seed would, which is the most any compact form could win back.
+[docs/protocol.md](docs/protocol.md#known-limits) has the details.
 
 The simulator's channel access was corrected after the bench test below showed how
 Direwolf behaves.
@@ -224,16 +271,18 @@ Keep the `.pem` file to yourself. Anyone with it can sign as you.
 
 ## Before going on the air
 
-Nobody has run gossipmesh on the air yet. A field test on 2 m simplex is the next step, and
-the first one where relays out of the sender's range have to re-mix pieces they cannot
-decode yet. The bench above had every station in range of the sender.
+Nobody has run gossipmesh on the air yet. Running 3 to 5 stations on the air, and a field
+test on 2 m simplex timing how long the farthest station takes to decode, are still to do. Both need licensed operators and radios. The field test will also
+be the first time relays out of the sender's range have to re-mix pieces they cannot decode
+yet; on the bench every station was in range of the sender.
 
 Read [docs/part97.md](docs/part97.md), a section-by-section reading of the US rules checked
 against eCFR on 2026-11-19. In short: unattended relaying of data is allowed on 6 m and up,
 and only in a few narrow segments on HF. A gossipmesh network counts as a message forwarding
 system, so originators answer for content, and signatures are how relays authenticate them.
 The protocol is public and unencrypted, and every frame carries the sending station's call
-sign. It is not legal advice, and other countries' rules differ.
+sign. It is not legal advice. For the UK, Canada, Australia, Germany and Japan, see
+[docs/rules-elsewhere.md](docs/rules-elsewhere.md).
 
 ## License
 

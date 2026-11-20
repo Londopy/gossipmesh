@@ -3,7 +3,8 @@
 This is a reading of the US amateur rules (47 CFR Part 97) as they apply to running
 gossipmesh stations unattended. It was checked against eCFR on 2026-11-19 (eCFR text current
 to 2026-11-18). It is one operator's reading, not legal advice. Other countries' rules
-differ.
+differ; [rules-elsewhere.md](rules-elsewhere.md) looks at the UK, Canada, Australia, Germany
+and Japan.
 
 ## Short version
 
