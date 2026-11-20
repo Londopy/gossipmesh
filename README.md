@@ -147,6 +147,17 @@ Each node prints a line when it decodes a message and saves the body under `--ou
 message id. A hardware TNC in KISS mode works with `--serial COM3 --serial-baud 9600`. For
 9600 baud radios, pass `--baud 9600` so the node paces itself to the channel.
 
+For a node left running unattended, three options cover what Part 97 asks of a relay (see
+[docs/part97.md](docs/part97.md)):
+
+- `--log FILE` keeps every frame sent and heard. `gossipmesh decode FILE --out DIR` recovers
+  the messages from it later.
+- `--blocklist FILE` takes message ids, one per line, and the node stops relaying them as
+  soon as the file changes.
+- `--relay-trusted-only` (with `--trust`) relays only messages signed by a trusted key, after
+  decoding them. Delivery through such a node is slower, because it can no longer pass on
+  pieces before it has the whole message.
+
 ### What the bench showed
 
 Three Direwolf 1.8.1 instances at 1200 baud shared one virtual audio cable on Windows, so

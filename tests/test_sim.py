@@ -1,10 +1,12 @@
 import random
+from pathlib import Path
 
 import pytest
 
 from gossipmesh import Params, Station
 from gossipmesh._ax25 import KissReader, kiss_wrap, parse_ui, ui_frame
-from gossipmesh._node import run
+from gossipmesh._framelog import FrameLog, replay
+from gossipmesh._node import Blocklist, run
 from gossipmesh._baselines import UncodedNode
 from gossipmesh._sim import Scenario, channel, compare, place
 from gossipmesh._sim import run as simulate
@@ -61,16 +63,29 @@ class FakeTnc:
         return b""
 
 
-def test_node_loop_speaks_kiss_both_ways() -> None:
+def test_node_loop_speaks_kiss_both_ways(tmp_path: Path) -> None:
     a = Station("N0AAA", Params(), random.Random(1))
     b = Station("N0BBB-7", Params(), random.Random(2))
     sent_by_a = a.originate(b"over the air" * 30, 0.0)
     sent_by_b = b.originate(b"and back" * 30, 0.0)
     tnc = FakeTnc(b)
+    log = tmp_path / "frames.log"
     with pytest.raises(ConnectionError):
-        run(a, tnc, lambda n: 1.5, tnc.clock)
+        run(a, tnc, lambda n: 1.5, tnc.clock, log=FrameLog(log))
     assert b.delivered[sent_by_a].envelope.body == b"over the air" * 30
     assert a.delivered[sent_by_b].envelope.originator == "N0BBB-7"
+    # the log alone is enough to recover everything the node sent and heard
+    bodies = {d.envelope.body for d in replay(log)}
+    assert bodies == {b"over the air" * 30, b"and back" * 30}
+
+
+def test_blocklist_picks_up_new_ids_when_the_file_changes(tmp_path: Path) -> None:
+    path = tmp_path / "blocked.txt"
+    blocklist = Blocklist(path)
+    assert blocklist.poll() == set()
+    path.write_text("0011223344556677  # spam\nnot an id\n")
+    assert blocklist.poll() == {bytes.fromhex("0011223344556677")}
+    assert blocklist.poll() == set()
 
 
 class Talker:

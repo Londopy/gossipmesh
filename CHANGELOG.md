@@ -15,6 +15,10 @@ what appears on its GitHub release page. Validated in CI by
   what coding itself saves.
 - `docs/part97.md`: the US amateur rules that apply to unattended gossipmesh relaying,
   checked against the current eCFR text.
+- `gossipmesh node --log` records every frame sent and heard, and `gossipmesh decode` turns
+  such a log back into messages.
+- `gossipmesh node --blocklist` stops relaying listed message ids without a restart.
+- `gossipmesh node --relay-trusted-only` relays only messages signed by a trusted key.
 
 ### Changed
 

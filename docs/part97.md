@@ -86,13 +86,15 @@ message says. In a gossip network, every station that hears the originator direc
 way to authenticate the originator. Without one, those first relays accept accountability
 for the content.
 
-What this asks of the software:
+What gossipmesh gives an operator for this:
 
-- An operator needs a way to stop relaying a particular message once they know it breaks
-  the rules (97.219(c)). gossipmesh has no such control yet.
-- An option to relay only messages signed by trusted keys would let first forwarders rely
-  on 97.219(d)(1) instead of (d)(2). gossipmesh checks signatures on delivery, but it relays
-  everything it hears.
+- `gossipmesh node --blocklist FILE` stops relaying any message whose id is in FILE, one id
+  per line. The node re-reads the file whenever it changes, so adding a line takes effect
+  within a second, without a restart (97.219(c)).
+- `gossipmesh node --relay-trusted-only --trust FILE` relays a message only after decoding
+  it and checking it is signed by a key in FILE. That relies on 97.219(d)(1) instead of
+  (d)(2). It costs the main trick: such a node cannot pass on pieces before it has decoded
+  the whole message, so delivery past it is slower.
 
 ## Obscured meaning and digital codes
 
@@ -112,10 +114,12 @@ communications transmitted."
 For gossipmesh: the network coding exists to get messages through loss, not to hide
 them. The spec and code are public, and anyone with the reference decoder can read every
 message. Signatures leave the content readable. Keep it that way: no encryption, and no
-compressed or binary payloads without a public description of how to read them. gossipmesh
-does not yet log what a node transmits. If a Regional Director asked for a record, saving
-every frame a node sends would provide one, because the public decoder turns those frames
-back into the messages.
+compressed or binary payloads without a public description of how to read them.
+
+`gossipmesh node --log FILE` appends every frame the node sends and hears to FILE.
+`gossipmesh decode FILE` turns that log back into the messages it holds. That is the record
+97.309(b)(3) describes, if a Regional Director ever asks for one. The heard frames matter:
+a relay's own transmissions are mixes of what it heard, and only together do they decode.
 
 ## Emission limits
 
@@ -125,7 +129,7 @@ From the 97.305(c) table and 97.307(f), for the bands that matter here:
 |---|---|---|
 | 6 m (50.1-54.0 MHz), 2 m (144.1-148.0 MHz) | 97.307(f)(5) | Specified or unspecified codes, symbol rate up to 19.6 kilobauds, bandwidth 20 kHz |
 | 1.25 m (222-225 MHz), 70 cm (whole band) | 97.307(f)(6) | Specified or unspecified codes, symbol rate up to 56 kilobauds, bandwidth 100 kHz |
-| HF data segments (for example 80 m, 40 m) | 97.307(f)(3) | "Only a RTTY or data emission using a specified digital code listed in ง 97.309(a) may be transmitted. The authorized bandwidth is 2.8 kHz" |
+| HF data segments (for example 80 m, 40 m) | 97.307(f)(3) | "Only a RTTY or data emission using a specified digital code listed in ยง 97.309(a) may be transmitted. The authorized bandwidth is 2.8 kHz" |
 
 1200 baud AFSK and 9600 baud packet fit easily on 2 m and 70 cm. On HF there is no longer a
 symbol-rate limit (except on 2200 m and 630 m), but only the specified codes (Baudot, AMTOR

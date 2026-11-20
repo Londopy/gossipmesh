@@ -126,3 +126,40 @@ def test_stops_asking_when_nobody_has_more() -> None:
     b.receive(encode(Status(h, bytes(len(h.gens)))), "N0EVL", 0.0)
     assert drain(b, 50_000.0) == P.status_repeats
     assert b.due() is None
+
+
+def test_blocked_message_is_dropped_and_never_relayed() -> None:
+    a, b, c = chain("N0AAA", "N0BBB", "N0CCC")
+    msg_id = a.originate(b"x" * 2000, 0.0)
+    b.receive(a.transmit(a.due() or 0.0) or b"", "N0AAA", 1.0)
+    b.block(msg_id)
+    assert b.due() is None
+    run([a, b, c], LINE, loss=0.0)
+    assert msg_id not in b.delivered and msg_id not in c.delivered
+
+
+def signer() -> tuple[object, bytes]:
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+
+    key = Ed25519PrivateKey.generate()
+    return key, key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+
+
+def test_trusted_only_relay_passes_on_trusted_messages() -> None:
+    key, pub = signer()
+    a, b, c = chain("N0AAA", "N0BBB", "N0CCC")
+    b.keys, b.relay_trusted_only = {"N0AAA": pub}, True
+    msg_id = a.originate(b"trusted" * 50, 0.0, key=key)
+    run([a, b, c], LINE, loss=0.1)
+    assert c.delivered[msg_id].envelope.body == b"trusted" * 50
+
+
+def test_trusted_only_relay_holds_back_untrusted_messages() -> None:
+    key, _ = signer()
+    a, b, c = chain("N0AAA", "N0BBB", "N0CCC")
+    b.relay_trusted_only = True
+    msg_id = a.originate(b"unknown key" * 50, 0.0, key=key)
+    run([a, b, c], LINE, loss=0.1)
+    assert b.delivered[msg_id].verified is None, "the relay still reads it"
+    assert msg_id not in c.delivered

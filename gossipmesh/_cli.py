@@ -6,7 +6,8 @@ from pathlib import Path
 
 from . import __version__
 from ._message import check_call, load_signing_key
-from ._node import Link, SerialLink, TcpLink, run
+from ._framelog import FrameLog, replay
+from ._node import Blocklist, Link, SerialLink, TcpLink, run
 from ._sim import STRATEGIES, Scenario, compare, report
 from ._station import Delivery, Params, Station
 
@@ -50,24 +51,30 @@ def _trust(path: Path) -> dict[str, bytes]:
     return keys
 
 
-def _node(args: argparse.Namespace) -> int:
-    sc = Scenario(baud=args.baud, txdelay=args.txdelay, block=args.block)
-    params = Params.for_packet_time(sc.airtime(args.block + 40), block_size=args.block)
-    out: Path | None = args.out
+def _report(d: Delivery, out: Path | None) -> None:
+    env = d.envelope
+    sig = {True: "signature ok", False: "signature bad", None: "unsigned"}[d.verified]
+    if env.signature is not None and d.verified is None:
+        sig = "signed by an untrusted key"
+    print(f"{env.msg_id.hex()} from {env.originator}, {len(env.body)} bytes, {sig}", flush=True)
     if out:
         out.mkdir(parents=True, exist_ok=True)
+        (out / f"{env.msg_id.hex()}.bin").write_bytes(env.body)
 
-    def delivered(d: Delivery) -> None:
-        env = d.envelope
-        sig = {True: "signature ok", False: "signature bad", None: "unsigned"}[d.verified]
-        if env.signature is not None and d.verified is None:
-            sig = "signed by an untrusted key"
-        print(f"{env.msg_id.hex()} from {env.originator}, {len(env.body)} bytes, {sig}", flush=True)
-        if out:
-            (out / f"{env.msg_id.hex()}.bin").write_bytes(env.body)
 
+def _node(args: argparse.Namespace) -> int:
+    if args.relay_trusted_only and not args.trust:
+        raise SystemExit("--relay-trusted-only needs --trust to know whose messages to relay")
+    sc = Scenario(baud=args.baud, txdelay=args.txdelay, block=args.block)
+    params = Params.for_packet_time(sc.airtime(args.block + 40), block_size=args.block)
     keys = _trust(args.trust) if args.trust else None
-    station = Station(args.call, params, keys=keys, on_deliver=delivered)
+    station = Station(
+        args.call,
+        params,
+        keys=keys,
+        on_deliver=lambda d: _report(d, args.out),
+        relay_trusted_only=args.relay_trusted_only,
+    )
     key = load_signing_key(args.key) if args.key else None
     link: Link
     if args.kiss:
@@ -79,7 +86,19 @@ def _node(args: argparse.Namespace) -> int:
         msg_id = station.originate(f.read_bytes(), time.time(), ttl=args.ttl, key=key)
         print(f"{msg_id.hex()} sent from {f}", flush=True)
     print(f"{station.call} listening", flush=True)
-    run(station, link, sc.airtime)
+    log = FrameLog(args.log) if args.log else None
+    blocklist = Blocklist(args.blocklist) if args.blocklist else None
+    run(station, link, sc.airtime, log=log, blocklist=blocklist)
+    return 0
+
+
+def _decode(args: argparse.Namespace) -> int:
+    keys = _trust(args.trust) if args.trust else None
+    found = replay(args.log, keys)
+    for d in found:
+        _report(d, args.out)
+    if not found:
+        print(f"{args.log} holds no complete message")
     return 0
 
 
@@ -143,7 +162,30 @@ def _parser() -> argparse.ArgumentParser:
     n.add_argument("--key", type=Path, help="Ed25519 private key (PEM) to sign with")
     n.add_argument("--trust", type=Path, help="file of 'CALLSIGN public-key-hex' lines")
     n.add_argument("--out", type=Path, help="directory to save received message bodies in")
+    n.add_argument(
+        "--log",
+        type=Path,
+        metavar="FILE",
+        help="append every frame sent and heard to FILE (see decode)",
+    )
+    n.add_argument(
+        "--blocklist",
+        type=Path,
+        metavar="FILE",
+        help="message ids to stop relaying, one per line; re-read when the file changes",
+    )
+    n.add_argument(
+        "--relay-trusted-only",
+        action="store_true",
+        help="relay a message only after decoding it and checking it is signed by a trusted key",
+    )
     n.set_defaults(func=_node)
+
+    d = sub.add_parser("decode", help="recover the messages in a node's --log file")
+    d.add_argument("log", type=Path)
+    d.add_argument("--trust", type=Path, help="file of 'CALLSIGN public-key-hex' lines")
+    d.add_argument("--out", type=Path, help="directory to save decoded message bodies in")
+    d.set_defaults(func=_decode)
 
     k = sub.add_parser("keygen", help="make an Ed25519 signing key")
     k.add_argument("file", type=Path)

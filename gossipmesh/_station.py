@@ -91,15 +91,18 @@ class Station:
         rng: random.Random | None = None,
         keys: dict[str, bytes] | None = None,
         on_deliver: Callable[[Delivery], None] | None = None,
+        relay_trusted_only: bool = False,
     ) -> None:
         self.call = check_call(call)
         self.params = params or Params()
         self.rng = rng or random.Random()
         self.keys = keys or {}
         self.on_deliver = on_deliver
+        self.relay_trusted_only = relay_trusted_only
         self.delivered: dict[bytes, Delivery] = {}
         self._msgs: dict[Header, _Msg] = {}
         self._dead: dict[Header, int] = {}
+        self._blocked: set[bytes] = set()
         self._coded_at: float | None = None
 
     def originate(self, body: bytes, now: float, ttl: float = 3600, key: Any = None) -> bytes:
@@ -125,6 +128,12 @@ class Station:
         self._schedule(now)
         return msg_id
 
+    def block(self, msg_id: bytes) -> None:
+        """Stop relaying a message and ignore it from now on."""
+        self._blocked.add(msg_id)
+        for h in [h for h in self._msgs if h.msg_id == msg_id]:
+            del self._msgs[h]
+
     def receive(self, frame: bytes, src: str, now: float) -> None:
         try:
             pkt = decode(frame)
@@ -132,7 +141,9 @@ class Station:
         except (BadPacket, ValueError):
             return
         h = pkt.header
-        if src == self.call or h in self._dead or not now < h.expiry <= now + self.params.max_ttl:
+        if src == self.call or h in self._dead or h.msg_id in self._blocked:
+            return
+        if not now < h.expiry <= now + self.params.max_ttl:
             return
         m = self._msgs.get(h)
         if m is None:
@@ -228,10 +239,16 @@ class Station:
         return max([0] + [mine - r[g] for r in self._fresh(m, now)])
 
     def _wanted(self, m: _Msg, g: int, now: float) -> tuple[int, int]:
-        if m.gens[g].rank == 0:
+        if m.gens[g].rank == 0 or not self._may_relay(m):
             return 0, 0
         need = self._need(m, g, now)
         return max(need, int(m.credit[g])), need
+
+    def _may_relay(self, m: _Msg) -> bool:
+        if not self.relay_trusted_only or m.originated:
+            return True
+        d = self.delivered.get(m.header.msg_id)
+        return d is not None and d.verified is True
 
     def _overheard(self, m: _Msg, src: str, g: int, rank: int, now: float) -> None:
         # assume neighbours that are behind the sender heard it too; STATUS corrects this later
