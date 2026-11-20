@@ -1,6 +1,6 @@
 import random
 
-from gossipmesh import Coded, Header, Params, Station, Status, encode
+from gossipmesh import Coded, Header, Params, Station, Status, decode, encode
 from gossipmesh._message import message_id
 
 P = Params(backoff=0.5, quiet=20.0)
@@ -163,3 +163,119 @@ def test_trusted_only_relay_holds_back_untrusted_messages() -> None:
     run([a, b, c], LINE, loss=0.1)
     assert b.delivered[msg_id].verified is None, "the relay still reads it"
     assert msg_id not in c.delivered
+
+
+def test_late_joiner_hears_a_beacon_and_gets_the_message() -> None:
+    a, b = chain("N0AAA", "N0BBB")
+    msg_id = a.originate(b"late" * 100, 0.0)
+    drain(a, 200.0)
+    assert msg_id not in b.delivered
+    run([a, b], {"N0AAA": ["N0BBB"], "N0BBB": ["N0AAA"]}, loss=0.0)
+    assert b.delivered[msg_id].envelope.body == b"late" * 100
+    assert b.delivered[msg_id].at > 200.0
+
+
+def test_beacon_is_skipped_after_hearing_a_neighbours() -> None:
+    (a,) = chain("N0AAA")
+    a.originate(b"x" * 300, 0.0)
+    drain(a, 1.0)
+    h = next(iter(a._msgs))
+    a.receive(encode(Status(h, bytes(h.gens))), "N0BBB", 2.0)
+    beacon = a.due()
+    assert beacon is not None and a.transmit(beacon) is None
+    nxt = a.due()
+    assert nxt is not None and a.transmit(nxt) is not None, "the next interval beacons again"
+
+
+def test_trusted_only_relay_ignores_a_forged_header_reusing_a_trusted_id() -> None:
+    key, pub = signer()
+    quiet = Params(backoff=0.5, quiet=20.0, beacon=0.0)
+    a, b, c = (Station(call, quiet, random.Random(i)) for i, call in enumerate(LINE))
+    b.keys, b.relay_trusted_only = {"N0AAA": pub}, True
+    msg_id = a.originate(b"trusted" * 50, 0.0, key=key)
+    t = run([a, b, c], LINE, loss=0.0)
+    assert b.delivered[msg_id].verified is True
+    real = next(iter(b._msgs))
+    forged = Header(real.msg_id, real.expiry - 1, real.length, real.block_size)
+    b.receive(encode(Coded(forged, 0, 1, bytes(128), seed=1)), "N0EVL", t)
+    b.receive(encode(Status(forged, bytes(len(forged.gens)))), "N0CCC", t)
+    sent = []
+    while (d := b.due()) is not None and d < t + 3000:
+        if (f := b.transmit(d)) is not None:
+            sent.append(decode(f))
+    assert not any(isinstance(p, Coded) and p.header == forged for p in sent)
+
+
+def test_trusted_only_node_still_sends_its_own_messages() -> None:
+    a, b = chain("N0AAA", "N0BBB")
+    a.relay_trusted_only = True
+    msg_id = a.originate(b"mine" * 30, 0.0)
+    run([a, b], {"N0AAA": ["N0BBB"], "N0BBB": ["N0AAA"]}, loss=0.0)
+    assert msg_id in b.delivered
+
+
+def test_unblocked_message_gets_through_again() -> None:
+    a, b = chain("N0AAA", "N0BBB")
+    msg_id = a.originate(b"x" * 300, 0.0)
+    b.block(msg_id)
+    b.unblock(msg_id)
+    run([a, b], {"N0AAA": ["N0BBB"], "N0BBB": ["N0AAA"]}, loss=0.0)
+    assert msg_id in b.delivered
+
+
+def complete_pair() -> tuple[Station, Station, Header]:
+    a, b = chain("N0AAA", "N0BBB")
+    a.originate(b"x" * 300, 0.0)
+    t = 0.0
+    while not b.delivered:
+        t = max(t, a.due() or t)
+        if (f := a.transmit(t)) is not None:
+            b.receive(f, "N0AAA", t)
+        t += 1.0
+    return a, b, next(iter(b._msgs))
+
+
+def beacons(s: Station, start: float, until: float) -> list[float]:
+    """Times at which s sends a status, from start to until, hearing nothing."""
+    out = []
+    while (d := s.due()) is not None and d < until:
+        if (f := s.transmit(max(d, start))) is not None and isinstance(decode(f), Status):
+            out.append(d)
+    return out
+
+
+def test_a_receiver_that_completes_beacons_too() -> None:
+    _, b, _ = complete_pair()
+    assert len([t for t in beacons(b, 0.0, 3000.0) if t > 1500]) >= 2
+
+
+def test_partial_status_does_not_suppress_a_beacon() -> None:
+    (a,) = chain("N0AAA")
+    a.originate(b"x" * 300, 0.0)
+    drain(a, 1.0)
+    h = next(iter(a._msgs))
+    a.receive(encode(Status(h, bytes(k - 1 for k in h.gens))), "N0BBB", 2.0)
+    assert a._msgs[h].beacon_heard is False
+
+
+def test_forged_full_status_cannot_silence_beacons_for_good() -> None:
+    (a,) = chain("N0AAA")
+    a.originate(b"x" * 300, 0.0)
+    drain(a, 1.0)
+    h = next(iter(a._msgs))
+    sent = 0
+    for _ in range(8):
+        a.receive(encode(Status(h, bytes(h.gens))), "N0EVL", a.due() or 0.0)
+        d = a.due()
+        if d is not None and a.transmit(d) is not None:
+            sent += 1
+    assert sent == 2, "every fourth interval beacons regardless"
+
+
+def test_trusted_only_node_does_not_beacon_unverified_messages() -> None:
+    _, b, h = complete_pair()
+    b.relay_trusted_only = True
+    b._msgs[h].next_status = None  # past the completion statuses, which carry no content
+    for _ in range(5):
+        beacon = b.due()
+        assert beacon is not None and b.transmit(beacon) is None

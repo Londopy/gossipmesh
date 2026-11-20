@@ -64,18 +64,28 @@ class Blocklist:
 
     def __init__(self, path: Path) -> None:
         self.path = path
-        self._mtime: float | None = None
+        self._seen: tuple[int, int] | None = None
 
-    def poll(self) -> set[bytes]:
+    def poll(self) -> set[bytes] | None:
+        """Every id in the file if it changed since the last call, otherwise None."""
         try:
-            mtime = self.path.stat().st_mtime
+            st = self.path.stat()
         except FileNotFoundError:
+            st = None
+        # size as well as mtime: two quick edits can share a timestamp
+        seen = (st.st_mtime_ns, st.st_size) if st else (0, -1)
+        if seen == self._seen:
+            return None
+        self._seen = seen
+        if st is None:
             return set()
-        if mtime == self._mtime:
-            return set()
-        self._mtime = mtime
         ids = set()
-        for n, line in enumerate(self.path.read_text().splitlines(), 1):
+        try:
+            text = _read_text(self.path)
+        except OSError as e:
+            print(f"gossipmesh: {self.path}: {e}; keeping the previous blocklist", file=sys.stderr)
+            return None
+        for n, line in enumerate(text.splitlines(), 1):
             line = line.split("#")[0].strip()
             try:
                 if line:
@@ -85,11 +95,70 @@ class Blocklist:
         return ids
 
 
+def _read_text(path: Path) -> str:
+    # PowerShell 5's `>` writes UTF-16 with a BOM, and Notepad may add a UTF-8 BOM
+    data = path.read_bytes()
+    if data.startswith((b"\xff\xfe", b"\xfe\xff")):
+        return data.decode("utf-16", errors="replace")
+    return data.decode("utf-8-sig", errors="replace")
+
+
 def _msg_id(text: str) -> bytes:
     raw = bytes.fromhex(text)
     if len(raw) != 8:
         raise ValueError(f"{text!r} is not a 16-digit message id")
     return raw
+
+
+class Outbox:
+    """A folder to drop message files into. Each one is sent once, then moved to sent/.
+
+    A file that cannot be sent (too big, unreadable) moves to failed/ instead, so one bad file
+    never stops the node or blocks the ones after it.
+    """
+
+    # editor swap files, Explorer and Finder droppings
+    IGNORE = ("Thumbs.db", "desktop.ini")
+
+    def __init__(self, path: Path, send: Callable[[bytes, float], None]) -> None:
+        self.path = path
+        self.send = send
+
+    def poll(self, now: float) -> None:
+        for f in sorted(self.path.iterdir()):
+            if not f.is_file() or f.name.startswith(".") or f.name.endswith(("~", ".swp")):
+                continue
+            if f.name in self.IGNORE:
+                continue
+            try:
+                # a file touched in the last second may still be being written
+                if now - f.stat().st_mtime < 1.0:
+                    continue
+                self.send(f.read_bytes(), now)
+                folder = "sent"
+            except (OSError, ValueError) as e:
+                print(f"gossipmesh: {f}: not sent: {e}", file=sys.stderr, flush=True)
+                folder = "failed"
+            try:
+                (self.path / folder).mkdir(exist_ok=True)
+                f.replace(self.path / folder / f"{int(now)}-{f.name}")
+            except OSError as e:
+                print(f"gossipmesh: {f}: could not move it to {folder}/: {e}", file=sys.stderr)
+
+
+def _apply_blocklist(
+    station: Station, before: set[bytes], now_blocked: set[bytes], now: float, log: FrameLog | None
+) -> None:
+    for msg_id in sorted(now_blocked - before):
+        station.block(msg_id)
+        print(f"blocking {msg_id.hex()}", flush=True)
+        if log:
+            log.note(now, "block", msg_id)
+    for msg_id in sorted(before - now_blocked):
+        station.unblock(msg_id)
+        print(f"unblocking {msg_id.hex()}", flush=True)
+        if log:
+            log.note(now, "unblock", msg_id)
 
 
 def run(
@@ -99,6 +168,7 @@ def run(
     clock: Callable[[], float] = time.time,
     log: FrameLog | None = None,
     blocklist: Blocklist | None = None,
+    outbox: Outbox | None = None,
 ) -> None:
     """Pass frames between the station and the TNC until the link fails.
 
@@ -107,11 +177,16 @@ def run(
     """
     reader = KissReader()
     hold_until = 0.0
+    blocked: set[bytes] = set()
     while True:
         data = link.recv()
         now = clock()
-        for msg_id in blocklist.poll() if blocklist else ():
-            station.block(msg_id)
+        ids = blocklist.poll() if blocklist else None
+        if ids is not None:
+            _apply_blocklist(station, blocked, ids, now, log)
+            blocked = ids
+        if outbox:
+            outbox.poll(now)
         for frame in reader.feed(data):
             ui = parse_ui(frame)
             if ui is not None:

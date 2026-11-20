@@ -34,6 +34,7 @@ class Params:
     max_ttl: float = 86400.0
     max_msgs: int = 64
     status_repeats: int = 6
+    beacon: float = 600.0
 
     @classmethod
     def for_packet_time(cls, airtime: float, **kw: Any) -> "Params":
@@ -65,6 +66,10 @@ class _Msg:
     heard: dict[str, float] = field(default_factory=dict)
     last_status: float = -math.inf
     originated: bool = False
+    beacon_at: float | None = None
+    beacon_heard: bool = False
+    beacon_skips: int = 0
+    trusted: bool = False
 
     def __post_init__(self) -> None:
         self.credit = [0.0] * len(self.gens)
@@ -92,6 +97,7 @@ class Station:
         keys: dict[str, bytes] | None = None,
         on_deliver: Callable[[Delivery], None] | None = None,
         relay_trusted_only: bool = False,
+        listen_only: bool = False,
     ) -> None:
         self.call = check_call(call)
         self.params = params or Params()
@@ -99,6 +105,7 @@ class Station:
         self.keys = keys or {}
         self.on_deliver = on_deliver
         self.relay_trusted_only = relay_trusted_only
+        self.listen_only = listen_only
         self.delivered: dict[bytes, Delivery] = {}
         self._msgs: dict[Header, _Msg] = {}
         self._dead: dict[Header, int] = {}
@@ -123,6 +130,7 @@ class Station:
         m = _Msg(header, gens, None, p.quiet, 0)
         m.credit = [k + p.push_extra for k in header.gens]
         m.originated = True
+        self._arm_beacon(m, now)
         self._msgs[header] = m
         self.delivered[msg_id] = Delivery(env, now, True if key is not None else None)
         self._schedule(now)
@@ -133,6 +141,9 @@ class Station:
         self._blocked.add(msg_id)
         for h in [h for h in self._msgs if h.msg_id == msg_id]:
             del self._msgs[h]
+
+    def unblock(self, msg_id: bytes) -> None:
+        self._blocked.discard(msg_id)
 
     def receive(self, frame: bytes, src: str, now: float) -> None:
         try:
@@ -155,6 +166,8 @@ class Station:
         theirs = m.ranks.setdefault(src, [0] * len(h.gens))
         if isinstance(pkt, Status):
             theirs[:] = pkt.ranks
+            if list(pkt.ranks) == h.gens:
+                m.beacon_heard = True
         else:
             theirs[pkt.gen] = pkt.rank
             self._overheard(m, src, pkt.gen, pkt.rank, now)
@@ -165,7 +178,10 @@ class Station:
 
     def due(self) -> float | None:
         """Earliest time this station wants the channel, or None if it has nothing to send."""
+        if self.listen_only:
+            return None
         times = [t for m in self._msgs.values() if (t := self._status_at(m)) is not None]
+        times += [m.beacon_at for m in self._msgs.values() if m.beacon_at is not None]
         if self._coded_at is not None:
             times.append(self._coded_at)
         return min(times, default=None)
@@ -177,6 +193,14 @@ class Station:
             at = self._status_at(m)
             if at is not None and at <= now:
                 return self._send_status(m, now)
+        for m in self._msgs.values():
+            if m.beacon_at is not None and m.beacon_at <= now:
+                # a forged full-rank status could otherwise silence beacons for good
+                skip = m.beacon_heard and m.beacon_skips < 3
+                m.beacon_skips = m.beacon_skips + 1 if skip else 0
+                self._arm_beacon(m, now)
+                if not skip and self._may_relay(m):
+                    return encode(Status(m.header, bytes(m.mine())))
         if self._coded_at is None or self._coded_at > now:
             return None
         return self._send_coded(now)
@@ -216,6 +240,9 @@ class Station:
             return
         # repeated, so a neighbour that missed everything still hears that this exists
         self._arm_status(m, now + self.rng.uniform(0, self.params.backoff * self.params.window))
+        self._arm_beacon(m, now)
+        # trust belongs to this header: a forged header reusing the id stays untrusted
+        m.trusted = verified is True
         d = self.delivered[h.msg_id] = Delivery(env, now, verified)
         if self.on_deliver:
             self.on_deliver(d)
@@ -245,10 +272,7 @@ class Station:
         return max(need, int(m.credit[g])), need
 
     def _may_relay(self, m: _Msg) -> bool:
-        if not self.relay_trusted_only or m.originated:
-            return True
-        d = self.delivered.get(m.header.msg_id)
-        return d is not None and d.verified is True
+        return not self.relay_trusted_only or m.originated or m.trusted
 
     def _overheard(self, m: _Msg, src: str, g: int, rank: int, now: float) -> None:
         # assume neighbours that are behind the sender heard it too; STATUS corrects this later
@@ -257,7 +281,7 @@ class Station:
                 r[g] += 1
 
     def _schedule(self, now: float) -> None:
-        if self._coded_at is not None:
+        if self._coded_at is not None or self.listen_only:
             return
         best = max(
             (
@@ -301,6 +325,13 @@ class Station:
         self._coded_at = None
         self._schedule(now)
         return encode(pkt)
+
+    def _arm_beacon(self, m: _Msg, now: float) -> None:
+        # Trickle-style: announce a complete message once per interval unless a neighbour
+        # already did, so a station that comes on air late still learns it exists
+        if self.params.beacon > 0:
+            m.beacon_at = now + self.params.beacon * self.rng.uniform(0.5, 1.0)
+            m.beacon_heard = False
 
     def _status_at(self, m: _Msg) -> float | None:
         return m.next_status

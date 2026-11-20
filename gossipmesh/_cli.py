@@ -7,7 +7,7 @@ from pathlib import Path
 from . import __version__
 from ._message import check_call, load_signing_key
 from ._framelog import FrameLog, replay
-from ._node import Blocklist, Link, SerialLink, TcpLink, run
+from ._node import Blocklist, Link, Outbox, SerialLink, TcpLink, run
 from ._sim import STRATEGIES, Scenario, compare, report
 from ._station import Delivery, Params, Station
 
@@ -57,17 +57,38 @@ def _report(d: Delivery, out: Path | None) -> None:
     if env.signature is not None and d.verified is None:
         sig = "signed by an untrusted key"
     print(f"{env.msg_id.hex()} from {env.originator}, {len(env.body)} bytes, {sig}", flush=True)
+    text = _short_text(env.body)
+    if text is not None:
+        for line in text.splitlines():
+            print("  " + line, flush=True)
     if out:
-        out.mkdir(parents=True, exist_ok=True)
-        (out / f"{env.msg_id.hex()}.bin").write_bytes(env.body)
+        try:
+            (out / f"{env.msg_id.hex()}.bin").write_bytes(env.body)
+        except OSError as e:
+            print(f"gossipmesh: could not save {env.msg_id.hex()}: {e}", file=sys.stderr)
+
+
+def _short_text(body: bytes) -> str | None:
+    """The body as text, if it is short readable UTF-8."""
+    try:
+        text = body.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    if len(text) > 500 or any(not c.isprintable() and c not in "\r\n\t" for c in text):
+        return None
+    return text
 
 
 def _node(args: argparse.Namespace) -> int:
     if args.relay_trusted_only and not args.trust:
         raise SystemExit("--relay-trusted-only needs --trust to know whose messages to relay")
     sc = Scenario(baud=args.baud, txdelay=args.txdelay, block=args.block)
-    params = Params.for_packet_time(sc.airtime(args.block + 40), block_size=args.block)
+    params = Params.for_packet_time(
+        sc.airtime(args.block + 40), block_size=args.block, beacon=args.beacon
+    )
     keys = _trust(args.trust) if args.trust else None
+    if args.out:
+        args.out.mkdir(parents=True, exist_ok=True)
     station = Station(
         args.call,
         params,
@@ -82,23 +103,38 @@ def _node(args: argparse.Namespace) -> int:
         link = TcpLink(host or "127.0.0.1", int(port))
     else:
         link = SerialLink(args.serial, args.serial_baud)
+
+    def send(body: bytes, now: float, source: str) -> None:
+        msg_id = station.originate(body, now, ttl=args.ttl, key=key)
+        print(f"{msg_id.hex()} sent from {source}", flush=True)
+
     for f in args.send or []:
-        msg_id = station.originate(f.read_bytes(), time.time(), ttl=args.ttl, key=key)
-        print(f"{msg_id.hex()} sent from {f}", flush=True)
+        send(f.read_bytes(), time.time(), str(f))
+    outbox = (
+        Outbox(args.outbox, lambda body, now: send(body, now, str(args.outbox)))
+        if args.outbox
+        else None
+    )
     print(f"{station.call} listening", flush=True)
     log = FrameLog(args.log) if args.log else None
     blocklist = Blocklist(args.blocklist) if args.blocklist else None
-    run(station, link, sc.airtime, log=log, blocklist=blocklist)
+    run(station, link, sc.airtime, log=log, blocklist=blocklist, outbox=outbox)
     return 0
 
 
 def _decode(args: argparse.Namespace) -> int:
     keys = _trust(args.trust) if args.trust else None
+    if args.out:
+        args.out.mkdir(parents=True, exist_ok=True)
     found = replay(args.log, keys)
-    for d in found:
+    for d in found.delivered:
         _report(d, args.out)
-    if not found:
+        if d.envelope.msg_id in found.blocked:
+            print("  (this node had it on its blocklist)")
+    if not found.delivered:
         print(f"{args.log} holds no complete message")
+    if found.skipped:
+        print(f"skipped {found.skipped} unreadable lines")
     return 0
 
 
@@ -158,7 +194,19 @@ def _parser() -> argparse.ArgumentParser:
     n.add_argument("--txdelay", type=float, default=0.3)
     n.add_argument("--block", type=int, default=128)
     n.add_argument("--send", type=Path, action="append", metavar="FILE", help="originate FILE")
+    n.add_argument(
+        "--outbox",
+        type=Path,
+        metavar="DIR",
+        help="send every file dropped into DIR while running, then move it to DIR/sent",
+    )
     n.add_argument("--ttl", type=float, default=3600, help="seconds until sent messages expire")
+    n.add_argument(
+        "--beacon",
+        type=float,
+        default=600,
+        help="seconds between beacons for complete messages, so late joiners get them (0: off)",
+    )
     n.add_argument("--key", type=Path, help="Ed25519 private key (PEM) to sign with")
     n.add_argument("--trust", type=Path, help="file of 'CALLSIGN public-key-hex' lines")
     n.add_argument("--out", type=Path, help="directory to save received message bodies in")
@@ -195,6 +243,11 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # message text comes off the air; a character the console code page lacks must not
+    # crash an unattended node whose output is redirected
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="backslashreplace")
     args = _parser().parse_args(argv)
     try:
         code: int = args.func(args)
