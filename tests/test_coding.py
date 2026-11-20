@@ -1,10 +1,10 @@
 import random
 
-import numpy as np
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from gossipmesh import Generation, seed_coefficients
+from gossipmesh._gf import Bytes
 
 MSG = bytes(8)
 
@@ -14,7 +14,7 @@ def blocks_for(k: int, size: int, seed: int) -> list[bytes]:
     return [rng.randbytes(size) for _ in range(k)]
 
 
-def seeded(src: Generation, g: int, seed: int) -> tuple[np.ndarray, np.ndarray]:
+def seeded(src: Generation, g: int, seed: int) -> tuple[Bytes, Bytes]:
     coeffs = seed_coefficients(MSG, g, seed, src.k)
     return coeffs, src.encode(coeffs)
 
