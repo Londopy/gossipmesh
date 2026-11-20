@@ -8,45 +8,29 @@ what appears on its GitHub release page. Validated in CI by
 
 ## [Unreleased]
 
-### Added
-
-- `uncoded` simulator strategy: the same protocol with coding switched off, using
-  per-generation bitmaps where the coded station uses ranks, so the simulator can measure
-  what coding itself saves.
-- `docs/part97.md`: the US amateur rules that apply to unattended gossipmesh relaying,
-  checked against the current eCFR text.
-- `gossipmesh node --log` records every frame sent and heard, and `gossipmesh decode` turns
-  such a log back into messages.
-- `gossipmesh node --blocklist` stops relaying listed message ids without a restart.
-- `gossipmesh node --relay-trusted-only` relays only messages signed by a trusted key.
-
-### Changed
-
-- The default back-off is 4 packet airtimes instead of 0.4. Over the simulator's sweep it
-  cut coded airtime by about 40% without slowing delivery on the default map.
-
-### Fixed
-
-- Stations that heard the same frames sent their status requests at the same instant, and
-  on a Direwolf bench they collided every time, so a message could stall. Status timers now
-  carry random jitter.
-- The originator's opening burst waited a random back-off before every frame, which doubled
-  delivery time on small networks for no benefit.
-- The simulator sensed a transmission the instant it began and always rolled `persist`.
-  It now gives carrier detect a tenth of a second to notice a frame and sends at once on a
-  clear channel, like Direwolf. The old model is what hid the status collisions.
-
 ## [0.1.0] - 2026-11-19
 
 ### Added
 
 - Protocol version 1: random linear network coding over GF(256) in generations of up to 32
   blocks, with seeded packets from complete stations and vector packets from partial relays.
+  The wire format is documented in `docs/protocol.md`.
 - Station logic driven by neighbour rank announcements, with no routes or acknowledgements.
-- Simulator comparing coded gossip with plain flooding and routed forwarding, with CSMA,
-  collisions and hidden stations.
-- `gossipmesh node` for KISS TNCs over TCP or serial.
-- Optional Ed25519 message signatures.
+  Status timers carry random jitter, so receivers that heard the same frames don't ask in
+  lockstep, which stalled the first bench run.
+- `gossipmesh sim`: a simulator comparing coded gossip with the same protocol uncoded, plain
+  flooding and routed forwarding, with Direwolf-like channel access, collisions and hidden
+  stations.
+- `gossipmesh node` for KISS TNCs over TCP or serial, tested on a three-station Direwolf bench.
+- Optional Ed25519 message signatures, and `gossipmesh keygen`.
+- Trickle-style beacons from stations holding a complete message, so a station that comes
+  on the air late still gets it. `--beacon` sets the interval or turns them off.
+- `gossipmesh node --outbox` sends every file dropped into a folder while the node runs,
+  and short text messages are printed when they arrive.
+- Relay controls for unattended nodes: `--log` with `gossipmesh decode`, `--blocklist` and
+  `--relay-trusted-only`.
+- `docs/part97.md`: the US amateur rules that apply to unattended relaying, checked against
+  the current eCFR text.
 
 [Unreleased]: https://github.com/Londopy/gossipmesh/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/Londopy/gossipmesh/releases/tag/v0.1.0

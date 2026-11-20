@@ -143,10 +143,20 @@ decides when to transmit. Other implementations can do better and still interope
 - A station that completes a message sends a status, then repeats it 5 more times on the same
   doubling schedule. Neighbours stop sending to it, and a neighbour that missed everything
   learns the message exists.
+- From the moment it completes a message, a station also beacons a status about once every
+  `beacon` seconds (default 600) until the message expires, so a station that comes on the
+  air later still hears of it. The first beacon can fall among the completion statuses
+  above. It works like Trickle: each interval is a random time between `beacon / 2` and
+  `beacon`, and a station that heard another complete station's status during the interval
+  skips its own. Normally one beacon goes out per neighbourhood per interval. After three
+  skipped intervals in a row it beacons anyway, so a forged full-rank status cannot
+  silence it. A station set to relay only trusted messages does not beacon others'
+  messages it could not verify.
 - The reference defaults, in units of one coded packet's airtime, are a back-off of 4, a
   window of 10 and a quiet time of 20.
-- A station tracks at most 64 messages at once. It reserves decoding memory for a generation
-  only when a coded packet for it arrives.
+- A station tracks at most 64 messages heard from other stations at once; its own messages
+  do not count. It reserves decoding memory for a generation only when a coded packet for
+  it arrives.
 - If a decoded message fails its hash check, a bad packet was mixed in. The station discards
   what it holds for that message and starts over. If the hash matches but the envelope is
   malformed, the originator sent a bad message, and the station ignores that id until it
@@ -156,9 +166,8 @@ decides when to transmit. Other implementations can do better and still interope
 
 ## Known limits
 
-- A station that comes on the air after its neighbours have stopped repeating their
-  completion status never hears about the message. Periodic beacons would fix this at an
-  airtime cost.
+- Beacons cost about one short frame per neighbourhood every 5 to 10 minutes for each live
+  message. A late joiner waits up to a beacon interval before it hears of a message.
 - A forged status that claims to be ahead keeps the stations that hear it asking every
   8 * `quiet` seconds until that message expires (a day at most). Each listener sends one
   short frame per forged message per interval, for up to 64 messages.

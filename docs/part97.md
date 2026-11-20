@@ -43,7 +43,8 @@ For gossipmesh:
   retransmit simultaneously on another channel.
 - On HF, unattended relaying belongs in the 97.221(b) segments. The 97.221(c) exception
   does not fit. A relay sends when its neighbours' statuses ask, and those neighbours are
-  usually automatic stations too, not stations under local or remote control.
+  usually automatic stations too, not stations under local or remote control. Its beacons
+  answer nobody at all. For HF outside those segments, at least run with `--beacon 0`.
 - The operator has to be able to stop a node promptly if a Regional Director says so.
   Stopping `gossipmesh node` does that.
 
@@ -90,11 +91,13 @@ What gossipmesh gives an operator for this:
 
 - `gossipmesh node --blocklist FILE` stops relaying any message whose id is in FILE, one id
   per line. The node re-reads the file whenever it changes, so adding a line takes effect
-  within a second, without a restart (97.219(c)).
+  within a second, without a restart (97.219(c)). It prints each block and records it in
+  the `--log`, so the record shows when the node stopped carrying a message.
 - `gossipmesh node --relay-trusted-only --trust FILE` relays a message only after decoding
   it and checking it is signed by a key in FILE. That relies on 97.219(d)(1) instead of
-  (d)(2). It costs the main trick: such a node cannot pass on pieces before it has decoded
-  the whole message, so delivery past it is slower.
+  (d)(2). A message it cannot verify, it never passes on. It costs the main trick for the
+  rest: such a node cannot pass on pieces before it has decoded the whole message, so
+  delivery past it is slower.
 
 ## Obscured meaning and digital codes
 

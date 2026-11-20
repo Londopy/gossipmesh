@@ -1,6 +1,8 @@
 # gossipmesh
 
 [![CI](https://github.com/Londopy/gossipmesh/actions/workflows/ci.yml/badge.svg)](https://github.com/Londopy/gossipmesh/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/Londopy/gossipmesh)](https://github.com/Londopy/gossipmesh/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/Londopy/gossipmesh/total)](https://github.com/Londopy/gossipmesh/releases)
 [![changelog](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/Londopy/gossipmesh/gh-pages/changelog-badge.json)](CHANGELOG.md)
 [![License](https://img.shields.io/github/license/Londopy/gossipmesh)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.10%E2%80%933.13-3776AB)](pyproject.toml)
@@ -12,7 +14,11 @@ A message is cut into blocks, and every packet on the air is a random mix of tho
 (random linear network coding over GF(256)). Stations keep whatever they hear, from anyone,
 and send fresh mixes of it on to their neighbours before they can decode anything. A station
 decodes once it holds enough independent mixes, whichever stations they came from. Stations
-announce how much they hold, so the network goes quiet once everyone nearby has the message.
+announce how much they hold, so they stop sending once everyone nearby has the message.
+After that, only a short beacon goes out every 5 to 10 minutes, for stations that join late.
+
+It has been tested in a simulator and on a bench of three Direwolf modems sharing a virtual
+audio cable. It has not been used on the air yet.
 
 ```console
 $ gossipmesh sim --runs 10
@@ -29,8 +35,9 @@ routed    105/190    13720   15818      1506.5          12001     20098       21
 - A station implementation that does no I/O, so the simulator and the radio run the same
   code.
 - A simulator: stations scattered on a map, with packet loss that rises toward the edge of
-  range, channel access that behaves like Direwolf's, collisions and hidden stations. It compares coded gossip with
-  the same protocol uncoded, plain flooding, and point-to-point forwarding.
+  range, channel access that behaves like Direwolf's, collisions and hidden stations. It
+  compares coded gossip with the same protocol uncoded, plain flooding, and point-to-point
+  forwarding.
 - `gossipmesh node`, which runs a station against a KISS TNC over TCP (Direwolf, UZ7HO
   soundmodem) or a serial port.
 - Optional Ed25519 signatures. They prove who sent a message, and the content stays
@@ -39,14 +46,23 @@ routed    105/190    13720   15818      1506.5          12001     20098       21
 
 ## Install
 
-gossipmesh is not on PyPI yet. From a checkout:
+gossipmesh is not on PyPI yet. Every [release](https://github.com/Londopy/gossipmesh/releases/latest)
+has a wheel you can install with pip:
 
 ```bash
-pip install -e ".[all]"
+pip install "gossipmesh[all] @ https://github.com/Londopy/gossipmesh/releases/download/v0.1.0/gossipmesh-0.1.0-py3-none-any.whl"
 ```
 
 The `all` extra pulls in `cryptography` for signatures and `pyserial` for serial TNCs. Without
-it you get the simulator and KISS over TCP, with only numpy as a dependency.
+it you get the simulator and KISS over TCP, with only numpy as a dependency. Each release
+also lists the SHA-256 of every file in `SHA256SUMS.txt`, and has a torrent per file.
+
+From a checkout, for development:
+
+```bash
+pip install -e ".[all,dev]"
+pytest
+```
 
 ## Simulate
 
@@ -65,7 +81,8 @@ The columns:
 - **airtime s:** total channel time used per run, all stations added up.
 - **air/delivery s:** airtime divided by stations reached.
 - **median s** and **farthest s:** time until a station decodes, and until the last one does.
-- **quiet at s:** when the last frame went out.
+- **quiet at s:** when the last frame went out. The simulator turns beacons off, since every
+  simulated station is there from the start.
 
 The comparison that matters is with **uncoded**. That is the same protocol with coding
 switched off: the same generations, timers, back-off and opening push. A data frame carries
@@ -143,9 +160,19 @@ gossipmesh node --call N0CALL-1 --kiss 127.0.0.1:8001 --out received --send note
 gossipmesh node --call N0CALL-2 --kiss 127.0.0.1:8011 --out received2
 ```
 
-Each node prints a line when it decodes a message and saves the body under `--out`, named by
-message id. A hardware TNC in KISS mode works with `--serial COM3 --serial-baud 9600`. For
-9600 baud radios, pass `--baud 9600` so the node paces itself to the channel.
+Each node prints a line when it decodes a message, followed by the text itself when the
+message is short plain text, and saves the body under `--out`, named by message id. A
+hardware TNC in KISS mode works with `--serial COM3 --serial-baud 9600`. For 9600 baud
+radios, pass `--baud 9600` so the node paces itself to the channel.
+
+To send more messages while a node runs, start it with `--outbox DIR`. Every file dropped
+into DIR goes out as a message (signed, with `--key`) and then moves to `DIR/sent`. A node
+that holds a complete message beacons it every 5 to 10 minutes until it expires. A station
+that comes on the air late still gets it, and neighbours that hear each other's beacons
+send only one between them. A beacon is about half a second of airtime at 1200 baud, so many
+live messages add up: `--beacon SECONDS` sets the interval, and `--beacon 0` turns beacons
+off. A file the node cannot send, such as one over the 64 KB limit, moves to `DIR/failed`
+with an error, and the node carries on.
 
 For a node left running unattended, three options cover what Part 97 asks of a relay (see
 [docs/part97.md](docs/part97.md)):
@@ -153,10 +180,12 @@ For a node left running unattended, three options cover what Part 97 asks of a r
 - `--log FILE` keeps every frame sent and heard. `gossipmesh decode FILE --out DIR` recovers
   the messages from it later.
 - `--blocklist FILE` takes message ids, one per line, and the node stops relaying them as
-  soon as the file changes.
+  soon as the file changes. Deleting a line lifts the block. The node prints each change,
+  and `decode` marks blocked messages.
 - `--relay-trusted-only` (with `--trust`) relays only messages signed by a trusted key, after
-  decoding them. Delivery through such a node is slower, because it can no longer pass on
-  pieces before it has the whole message.
+  decoding them. Anything it cannot verify it never passes on, and trusted messages get
+  through it more slowly, because it can no longer pass on pieces before it has the whole
+  message.
 
 ### What the bench showed
 
@@ -192,6 +221,10 @@ message signed by a key they don't hold is delivered and marked untrusted.
 Keep the `.pem` file to yourself. Anyone with it can sign as you.
 
 ## Before going on the air
+
+Nobody has run gossipmesh on the air yet. A field test on 2 m simplex is the next step, and
+the first one where relays out of the sender's range have to re-mix pieces they cannot
+decode yet. The bench above had every station in range of the sender.
 
 Read [docs/part97.md](docs/part97.md), a section-by-section reading of the US rules checked
 against eCFR on 2026-11-19. In short: unattended relaying of data is allowed on 6 m and up,
