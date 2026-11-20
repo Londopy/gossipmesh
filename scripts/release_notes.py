@@ -251,11 +251,16 @@ def main():
             "**pip**, with the optional signing and serial-TNC support:",
             "",
             "```bash",
-            f'pip install "gossipmesh[all] @ {download}/{wheel}"',
+            f'pip install "gossipmesh[all]=={version}"',
             "```",
             "",
             "Leave out `[all]` for just the simulator and KISS over TCP, with numpy as the only "
-            "dependency. Then run `gossipmesh --help`.",
+            "dependency. Then run `gossipmesh --help`. To install this release's wheel straight "
+            "from GitHub instead:",
+            "",
+            "```bash",
+            f'pip install "gossipmesh[all] @ {download}/{wheel}"',
+            "```",
             "",
         ]
     if sdist:

@@ -134,13 +134,11 @@ jobs:
             gh release edit "$TAG" --draft=false --latest
           fi
 
-  # Trusted publishing: PyPI trusts this workflow, so no API token is stored
-  # anywhere. It needs a publisher set up on pypi.org first; until then the
-  # PYPI repository variable stays unset and this job is skipped instead of
-  # failing every release.
+  # Trusted publishing: PyPI trusts this workflow (publisher on pypi.org:
+  # Londopy/gossipmesh, release.yml, environment pypi), so no API token is
+  # stored anywhere.
   pypi:
     needs: [validate, build, release]
-    if: vars.PYPI == 'true'
     runs-on: ubuntu-latest
     environment: pypi
     permissions:

@@ -5,7 +5,8 @@
 [![Downloads](https://img.shields.io/github/downloads/Londopy/gossipmesh/total)](https://github.com/Londopy/gossipmesh/releases)
 [![changelog](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/Londopy/gossipmesh/gh-pages/changelog-badge.json)](CHANGELOG.md)
 [![License](https://img.shields.io/github/license/Londopy/gossipmesh)](LICENSE)
-[![Python](https://img.shields.io/badge/python-3.10%E2%80%933.13-3776AB)](pyproject.toml)
+[![PyPI](https://img.shields.io/pypi/v/gossipmesh)](https://pypi.org/project/gossipmesh/)
+[![Python](https://img.shields.io/pypi/pyversions/gossipmesh)](https://pypi.org/project/gossipmesh/)
 
 **Get a message to every station in a packet radio network with no routes, connections or
 per-packet ACKs.**
@@ -46,16 +47,17 @@ routed    105/190    13720   15818      1506.5          12001     20098       21
 
 ## Install
 
-gossipmesh is not on PyPI yet. Every [release](https://github.com/Londopy/gossipmesh/releases/latest)
-has a wheel you can install with pip:
-
 ```bash
-pip install "gossipmesh[all] @ https://github.com/Londopy/gossipmesh/releases/download/v0.1.0/gossipmesh-0.1.0-py3-none-any.whl"
+pip install "gossipmesh[all]"
 ```
 
 The `all` extra pulls in `cryptography` for signatures and `pyserial` for serial TNCs. Without
-it you get the simulator and KISS over TCP, with only numpy as a dependency. Each release
-also lists the SHA-256 of every file in `SHA256SUMS.txt`, and has a torrent per file.
+it you get the simulator and KISS over TCP, with only numpy as a dependency. Python 3.10 or
+newer, on any OS.
+
+Every [GitHub release](https://github.com/Londopy/gossipmesh/releases/latest) also has the
+wheel and source archive, `SHA256SUMS.txt` with the SHA-256 of every file, and a torrent per
+file.
 
 From a checkout, for development:
 
