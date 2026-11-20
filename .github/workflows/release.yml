@@ -1,28 +1,147 @@
 name: Release
 
+# Tag-driven: `git tag v1.2.3 && git push --tags` is the whole release ritual.
+# Everything below comes from the tag and the changelog, so a release can
+# never disagree with its own notes. A tag with a "-" (v1.2.3-rc1) becomes a
+# pre-release. Re-run an existing tag from the Actions tab (Run workflow).
+#
+# Produces, all listed in SHA256SUMS.txt:
+#   gossipmesh-<ver>-py3-none-any.whl   the wheel
+#   gossipmesh-<ver>.tar.gz             the source distribution
+# plus a .torrent and a magnet QR code (.magnet.png) per download, made by
+# scripts/release_notes.py, which also writes SHA256SUMS.txt and the notes.
+
 on:
   push:
-    tags: ["v*"]
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build (e.g. v1.2.3)"
+        required: true
+        type: string
+
+permissions:
+  contents: write   # create the release and upload assets
 
 jobs:
+  # Gate everything on the changelog first, so a release with broken notes
+  # never gets built.
+  validate:
+    name: Validate changelog and version
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - name: Resolve the tag
+        id: tag
+        run: echo "tag=${{ inputs.tag || github.ref_name }}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.tag.outputs.tag }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Fails unless CHANGELOG.md is valid Keep a Changelog and its newest
+      # section matches the tag. Pinned: the floating v2 tag once resolved to
+      # a release that silently ignored newer inputs.
+      - name: Validate and check version sync
+        uses: Londopy/patchnotes@v2.6.0
+        with:
+          file: CHANGELOG.md
+          strict: "true"
+          check-version: ${{ steps.tag.outputs.tag }}
+
+      - name: pyproject.toml agrees too
+        run: |
+          set -euo pipefail
+          pip install --quiet patchnotes==2.6.0
+          patchnotes CHANGELOG.md check-version --against pyproject.toml
+
   build:
+    needs: validate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate.outputs.tag }}
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
-      - run: pip install build
-      - run: python -m build
+          python-version: "3.12"
+      # the tests run against the tagged commit, not just whatever main had
+      - run: pip install -e ".[all,dev]"
+      - run: pytest
+      - run: pip install build==1.6.1 && python -m build
       - uses: actions/upload-artifact@v4
         with:
           name: dist
           path: dist/
 
-  pypi:
-    needs: build
+  release:
+    needs: [validate, build]
     runs-on: ubuntu-latest
-    # trusted publishing: PyPI trusts this workflow, so no API token is stored anywhere
+    env:
+      TAG: ${{ needs.validate.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.validate.outputs.tag }}
+          fetch-depth: 0   # the previous tag, for the compare link
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # torrents + magnet QR codes for every download, SHA256SUMS.txt over
+      # everything, and the release page from CHANGELOG.md (copied verbatim:
+      # `patchnotes show` prints indented text that renders as a code block)
+      - name: Release notes, checksums and torrents
+        run: |
+          set -euo pipefail
+          pip install --quiet segno==1.6.6
+          prev=$(git describe --tags --abbrev=0 "$TAG^" 2>/dev/null || true)
+          python scripts/release_notes.py "$TAG" dist --prev "$prev" --out body.md
+          echo "TITLE=$(cat title.txt)" >> "$GITHUB_ENV"
+          cat dist/SHA256SUMS.txt
+
+      # Draft first, publish after every asset is uploaded, so nobody fetches
+      # a half-uploaded release.
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          name: ${{ env.TITLE }}
+          body_path: body.md
+          files: dist/*
+          draft: true
+          prerelease: ${{ contains(env.TAG, '-') }}
+
+      - name: Publish the draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [[ "$TAG" == *-* ]]; then
+            gh release edit "$TAG" --draft=false
+          else
+            gh release edit "$TAG" --draft=false --latest
+          fi
+
+  # Trusted publishing: PyPI trusts this workflow, so no API token is stored
+  # anywhere. It needs a publisher set up on pypi.org first; until then the
+  # PYPI repository variable stays unset and this job is skipped instead of
+  # failing every release.
+  pypi:
+    needs: [validate, build, release]
+    if: vars.PYPI == 'true'
+    runs-on: ubuntu-latest
     environment: pypi
     permissions:
       id-token: write
@@ -34,27 +153,3 @@ jobs:
       - uses: pypa/gh-action-pypi-publish@release/v1
         with:
           skip-existing: true
-
-  github:
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: dist
-          path: dist/
-      - name: Release page from the changelog section
-        shell: bash
-        run: |
-          version="${GITHUB_REF_NAME#v}"
-          awk -v v="$version" '$0 ~ "^## \[" v "\]" {on=1; next} /^## \[/ {on=0} on' CHANGELOG.md > notes.md
-          (cd dist && sha256sum * > SHA256SUMS.txt)
-          prerelease=""
-          # a "-" in the tag (v0.2.0-rc1) marks a prerelease
-          [[ "$GITHUB_REF_NAME" == *-* ]] && prerelease="--prerelease"
-          gh release create "$GITHUB_REF_NAME" dist/* --notes-file notes.md $prerelease
-        env:
-          GH_TOKEN: ${{ github.token }}
