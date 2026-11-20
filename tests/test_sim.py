@@ -264,3 +264,55 @@ def test_outbox_moves_a_bad_file_aside_and_sends_the_rest(tmp_path: Path) -> Non
     assert sent == [b"ok"]
     assert [f.name for f in (tmp_path / "failed").iterdir()] == ["100-a_big.txt"]
     assert (tmp_path / ".swp").exists() and (tmp_path / "c~").exists()
+
+
+class Listener(Talker):
+    """Decodes once it has heard `need` coded data frames."""
+
+    def __init__(self, call: str, need: int) -> None:
+        super().__init__(call, [])
+        self.need = need
+        self.data = 0
+        self._done: float | None = None
+
+    @property
+    def done_at(self) -> float | None:
+        return self._done
+
+    def receive(self, frame: bytes, src: str, now: float) -> None:
+        super().receive(frame, src, now)
+        if frame[0] & 15 in (1, 2):
+            self.data += 1
+            if self.data >= self.need and self._done is None:
+                self._done = now
+
+
+class Sender(Talker):
+    def __init__(self, call: str, frames: list[tuple[float, int]]) -> None:
+        super().__init__(call, [t for t, _ in frames])
+        self.kinds = [k for _, k in frames]
+
+    def transmit(self, now: float) -> bytes | None:
+        self.sends.pop(0)
+        return bytes([0x10 | self.kinds.pop(0)]) + bytes(99)
+
+
+def test_heard_per_block_counts_data_frames_heard_before_decoding() -> None:
+    # sender: a status, two data frames, then two more after the listener has decoded
+    sender = Sender("N0SND", [(0, 3), (5, 1), (10, 2), (15, 1), (20, 1)])
+    listener, never = Listener("N0LSN", need=2), Listener("N0FAR", need=99)
+    nodes = [sender, listener, never]
+    pos = [(0.0, 0.0), (0.1, 0.0), (0.2, 0.0)]
+    r = channel("coded", list(nodes), Scenario(loss=0.0), pos, random.Random(1), blocks=4)
+    assert listener.data == 4
+    assert r.heard == [0.5], "2 data frames before decoding, over 4 blocks; N0FAR never decodes"
+
+
+def test_heard_per_block_skips_frames_lost_to_collisions() -> None:
+    a = Sender("N0AAA", [(0, 1), (8, 1)])
+    b = Sender("N0BBB", [(0.05, 1)])
+    listener = Listener("N0LSN", need=1)
+    pos = [(0.0, 0.0), (0.1, 0.0), (0.2, 0.0)]
+    r = channel("coded", [a, b, listener], Scenario(loss=0.0), pos, random.Random(1), blocks=1)
+    assert r.heard == [1.0]
+    assert listener.heard[0][1] > 8, "the first two collided"

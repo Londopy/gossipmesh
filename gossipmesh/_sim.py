@@ -2,6 +2,7 @@ import math
 import random
 import statistics
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -11,6 +12,14 @@ from ._station import Params, Station
 
 AX25_OVERHEAD = 20
 STRATEGIES = ("coded", "uncoded", "flood", "routed")
+
+# frames that carry message data, for counting how many a station hears before it decodes;
+# routed forwarding has no entry, since most frames a station hears there are not for it
+_DATA: dict[str, Callable[[bytes], bool]] = {
+    "coded": lambda f: f[0] & 15 in (1, 2),
+    "uncoded": lambda f: f[0] == 1,
+    "flood": lambda f: True,
+}
 
 
 class Node(Protocol):
@@ -64,6 +73,7 @@ class Result:
     airtime: float
     times: list[float] = field(default_factory=list)
     last_tx: float = 0.0
+    heard: list[float] = field(default_factory=list)
 
     @property
     def per_delivery(self) -> float:
@@ -126,7 +136,8 @@ def _calls(n: int) -> list[str]:
 
 def _build(
     strategy: str, sc: Scenario, pos: list[tuple[float, float]], rng: random.Random
-) -> list[Node]:
+) -> tuple[list[Node], int]:
+    """The stations, and how many blocks the message has."""
     calls = _calls(sc.stations)
     body = rng.randbytes(sc.size)
     packed = Envelope(calls[0], int(sc.limit * 2), body).pack()
@@ -138,17 +149,17 @@ def _build(
         coded[0].msg_id = coded[0].station.originate(body, 0.0, ttl=sc.limit * 2)
         for n in coded[1:]:
             n.msg_id = coded[0].msg_id
-        return list(coded)
+        return list(coded), len(blocks)
     if strategy == "uncoded":
         gens = layout(len(packed), sc.block)
         uncoded = [UncodedNode(c, gens, params, random.Random(rng.random())) for c in calls]
         uncoded[0].originate(blocks, 0.0)
-        return list(uncoded)
+        return list(uncoded), len(blocks)
     delay = params.backoff * params.window
     if strategy == "flood":
         flood = [FloodNode(c, len(blocks), delay, random.Random(rng.random())) for c in calls]
         flood[0].originate(blocks, 0.0)
-        return list(flood)
+        return list(flood), len(blocks)
     if strategy == "routed":
         nbrs = _neighbours(pos)
         timeout = 2 * sc.airtime(sc.block + 21) + 2 * sc.airtime(21) + 10 * sc.slot
@@ -158,7 +169,7 @@ def _build(
             hops = {calls[d]: calls[_first_hop(tree, i, d)] for d in tree if d != i}
             routed.append(RoutedNode(c, len(blocks), hops, timeout, random.Random(rng.random())))
         routed[0].originate(blocks, calls[1:], 0.0)
-        return list(routed)
+        return list(routed), len(blocks)
     raise ValueError(f"unknown strategy {strategy!r}; pick from {', '.join(STRATEGIES)}")
 
 
@@ -170,7 +181,8 @@ def _first_hop(tree: dict[int, int], src: int, dest: int) -> int:
 
 def run(strategy: str, sc: Scenario, pos: list[tuple[float, float]], rng: random.Random) -> Result:
     """Simulate one message from station 0 with CSMA, collisions and hidden stations."""
-    return channel(strategy, _build(strategy, sc, pos, rng), sc, pos, rng)
+    nodes, blocks = _build(strategy, sc, pos, rng)
+    return channel(strategy, nodes, sc, pos, rng, blocks)
 
 
 def channel(
@@ -179,9 +191,12 @@ def channel(
     sc: Scenario,
     pos: list[tuple[float, float]],
     rng: random.Random,
+    blocks: int = 0,
 ) -> Result:
     """Run already-built stations on the shared channel until they go quiet."""
     n = len(nodes)
+    is_data = _DATA.get(strategy)
+    heard = [0] * n
     nbrs = _neighbours(pos)
     loss = [[sc.loss_at(math.dist(pos[i], pos[j])) for j in range(n)] for i in range(n)]
     active: list[tuple[int, float, float, bytes]] = []
@@ -212,6 +227,8 @@ def channel(
                     for j, b, e in recent
                 )
                 if not clash and rng.random() >= loss[s][r]:
+                    if is_data and is_data(frame) and nodes[r].done_at is None:
+                        heard[r] += 1
                     nodes[r].receive(frame, nodes[s].call, t)
                     refresh(r)
             refresh(s)
@@ -247,7 +264,10 @@ def channel(
         else:
             next_try[i] = t + sc.slot
     times = [d for node in nodes[1:] if (d := node.done_at) is not None]
-    return Result(strategy, n - 1, len(times), frames, air, times, last_tx)
+    per_block = []
+    if is_data and blocks:
+        per_block = [heard[i] / blocks for i in range(1, n) if nodes[i].done_at is not None]
+    return Result(strategy, n - 1, len(times), frames, air, times, last_tx, per_block)
 
 
 def compare(
@@ -275,6 +295,7 @@ def report(results: list[list[Result]]) -> str:
             "median s",
             "farthest s",
             "quiet at s",
+            "heard/block",
         )
     ]
     for rs in results:
@@ -291,6 +312,7 @@ def report(results: list[list[Result]]) -> str:
                 f"{statistics.median(times):.0f}" if times else "-",
                 f"{statistics.mean(max(r.times) for r in rs if r.times):.0f}" if times else "-",
                 f"{statistics.mean(r.last_tx for r in rs):.0f}",
+                f"{statistics.mean(h):.2f}" if (h := [x for r in rs for x in r.heard]) else "-",
             )
         )
     widths = [max(len(r[c]) for r in rows) for c in range(len(rows[0]))]

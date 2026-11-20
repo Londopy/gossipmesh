@@ -69,3 +69,21 @@ def test_seed_coefficients_match_the_spec() -> None:
     assert (
         seed_coefficients(bytes(range(8)), 1, 0xDEADBEEF, 8).tobytes().hex() == "f3102bf268f48bee"
     )
+
+
+def test_decoding_takes_about_k_packets() -> None:
+    # the design target is about k + 2; over GF(256) a random mix is almost never redundant
+    rng = random.Random(5)
+    extra = []
+    for _ in range(300):
+        src = Generation.from_blocks(blocks_for(32, 16, rng.getrandbits(32)))
+        dst = Generation(32, 16)
+        sent = 0
+        while not dst.complete and sent < 40:
+            dst.add(*seeded(src, 0, rng.getrandbits(32)))
+            sent += 1
+        assert dst.complete and dst.blocks() == src.blocks()
+        extra.append(sent - 32)
+    assert min(extra) >= 0, "nothing decodes from fewer than k packets"
+    assert max(extra) <= 2
+    assert sum(extra) / len(extra) < 0.05
