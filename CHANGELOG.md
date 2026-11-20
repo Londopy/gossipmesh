@@ -8,6 +8,21 @@ what appears on its GitHub release page. Validated in CI by
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-19
+
+### Added
+
+- `gossipmesh sim` reports heard/block: how many data frames a station heard before it could
+  decode, per block of the message.
+- README sections on how many packets decoding takes against the K + 2 design target, where
+  coded gossip beats plain flooding per delivered message and where it does not, and what
+  the relays' coefficient vectors cost. `docs/protocol.md` explains why a relay that has not
+  decoded yet cannot send a seed, and the README says 9600 baud has only been simulated.
+- `docs/rules-elsewhere.md`: how the UK, Canada, Australia, Germany and Japan treat
+  unattended relays, obscured meaning and identification, with sources.
+- Packet BBS forwarding (MBL/RLI, FBB, Winlink) and the PACSAT broadcast protocol in
+  `docs/prior-art.md`.
+
 ## [0.1.0] - 2026-11-19
 
 ### Added
@@ -21,16 +36,18 @@ what appears on its GitHub release page. Validated in CI by
 - `gossipmesh sim`: a simulator comparing coded gossip with the same protocol uncoded, plain
   flooding and routed forwarding, with Direwolf-like channel access, collisions and hidden
   stations.
-- `gossipmesh node` for KISS TNCs over TCP or serial, tested on a three-station Direwolf bench.
+- `gossipmesh node` for KISS TNCs over TCP or serial, tested on a three-station Direwolf
+  bench.
 - Optional Ed25519 message signatures, and `gossipmesh keygen`.
-- Trickle-style beacons from stations holding a complete message, so a station that comes
-  on the air late still gets it. `--beacon` sets the interval or turns them off.
-- `gossipmesh node --outbox` sends every file dropped into a folder while the node runs,
-  and short text messages are printed when they arrive.
+- Trickle-style beacons from stations holding a complete message, so a station that comes on
+  the air late still gets it. `--beacon` sets the interval or turns them off.
+- `gossipmesh node --outbox` sends every file dropped into a folder while the node runs, and
+  short text messages are printed when they arrive.
 - Relay controls for unattended nodes: `--log` with `gossipmesh decode`, `--blocklist` and
   `--relay-trusted-only`.
 - `docs/part97.md`: the US amateur rules that apply to unattended relaying, checked against
   the current eCFR text.
 
-[Unreleased]: https://github.com/Londopy/gossipmesh/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/Londopy/gossipmesh/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/Londopy/gossipmesh/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Londopy/gossipmesh/releases/tag/v0.1.0

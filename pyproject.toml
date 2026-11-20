@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "gossipmesh"
-version = "0.1.0"
+version = "0.2.0"
 description = "Network-coded gossip for amateur packet radio, with a simulator and a KISS TNC node"
 readme = "README.md"
 license = "Apache-2.0"
