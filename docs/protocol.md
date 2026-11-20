@@ -170,12 +170,11 @@ decides when to transmit. Other implementations can do better and still interope
 
 ## Part 97 notes
 
-These are the author's reading, not checked against the current rule text. Read the eCFR
-version of Part 97 before going on the air.
+[part97.md](part97.md) goes through the rules section by section, checked against eCFR on
+2026-11-19. For the protocol itself:
 
-- 97.113(a)(4): no encryption. Signatures are allowed because the content stays readable.
-- 97.309(a)(4): this document and the source code are the public description of the code.
-- 97.119: every frame carries the transmitting station's callsign.
-- 97.221: a station that relays without an operator present is under automatic control. That
-  is limited to certain HF segments; check the band you use. VHF and UHF are simpler.
-- Keep originators licensed, so relayed messages raise no third-party traffic questions.
+- Nothing is encrypted, and this document plus the reference code describe the code in full,
+  for 97.113(a)(4) and 97.309. Signatures are allowed because the content stays readable.
+- Every frame carries the transmitting station's call sign, for 97.119.
+- Unattended relaying is automatic control: allowed for data on 6 m and shorter wavelengths,
+  and only in a few segments on HF (97.221).

@@ -182,10 +182,12 @@ Keep the `.pem` file to yourself. Anyone with it can sign as you.
 
 ## Before going on the air
 
-Read [the Part 97 notes](docs/protocol.md#part-97-notes). In short: the protocol is public
-and unencrypted, and every frame carries the sending station's callsign. A node relaying
-with nobody at the radio is under automatic control, which Part 97.221 limits on HF. VHF and
-UHF are simpler.
+Read [docs/part97.md](docs/part97.md), a section-by-section reading of the US rules checked
+against eCFR on 2026-11-19. In short: unattended relaying of data is allowed on 6 m and up,
+and only in a few narrow segments on HF. A gossipmesh network counts as a message forwarding
+system, so originators answer for content, and signatures are how relays authenticate them.
+The protocol is public and unencrypted, and every frame carries the sending station's call
+sign. It is not legal advice, and other countries' rules differ.
 
 ## License
 

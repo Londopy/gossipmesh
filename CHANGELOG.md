@@ -13,6 +13,8 @@ what appears on its GitHub release page. Validated in CI by
 - `uncoded` simulator strategy: the same protocol with coding switched off, using
   per-generation bitmaps where the coded station uses ranks, so the simulator can measure
   what coding itself saves.
+- `docs/part97.md`: the US amateur rules that apply to unattended gossipmesh relaying,
+  checked against the current eCFR text.
 
 ### Changed
 
