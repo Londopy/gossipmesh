@@ -13,7 +13,7 @@ per-packet ACKs.</b>
 <a href="CHANGELOG.md"><img alt="Changelog" src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/Londopy/gossipmesh/gh-pages/changelog-badge.json"></a>
 <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/Londopy/gossipmesh"></a>
 <br>
-<a href="https://pypistats.org/packages/gossipmesh"><img alt="PyPI downloads" src="https://img.shields.io/pypi/dm/gossipmesh?label=pypi%20downloads"></a>
+<a href="https://pepy.tech/projects/gossipmesh"><img alt="PyPI downloads" src="https://static.pepy.tech/badge/gossipmesh/month"></a>
 <a href="https://github.com/Londopy/gossipmesh/releases"><img alt="Release downloads" src="https://img.shields.io/github/downloads/Londopy/gossipmesh/total?label=release%20downloads"></a>
 <a href="https://github.com/Londopy/gossipmesh/commits/main"><img alt="Last commit" src="https://img.shields.io/github/last-commit/Londopy/gossipmesh"></a>
 <a href="https://github.com/astral-sh/ruff"><img alt="Ruff" src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json"></a>
