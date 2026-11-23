@@ -52,8 +52,8 @@ Repository = "https://github.com/Londopy/gossipmesh"
 packages = ["gossipmesh"]
 
 [tool.hatch.build.targets.sdist]
-# the package and its tests only; CI config is no use to someone installing from source
-exclude = [".github/"]
+# the package and its tests only; CI config and README images are no use to an install
+exclude = [".github/", "docs/images/"]
 
 [tool.ruff]
 line-length = 100
