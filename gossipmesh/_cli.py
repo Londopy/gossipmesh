@@ -1,15 +1,23 @@
 import argparse
 import os
 import sys
+import threading
 import time
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from . import __version__
 from ._message import check_call, load_signing_key
 from ._framelog import FrameLog, replay
+from ._monitor import Monitor, short_text, signature_note
 from ._node import Blocklist, Link, Outbox, SerialLink, TcpLink, run
 from ._sim import STRATEGIES, Scenario, compare, report
 from ._station import Delivery, Params, Station
+
+if TYPE_CHECKING:
+    from ._tui import NodeApp
 
 
 def _sim(args: argparse.Namespace) -> int:
@@ -52,35 +60,40 @@ def _trust(path: Path) -> dict[str, bytes]:
     return keys
 
 
-def _report(d: Delivery, out: Path | None) -> None:
-    env = d.envelope
-    sig = {True: "signature ok", False: "signature bad", None: "unsigned"}[d.verified]
-    if env.signature is not None and d.verified is None:
-        sig = "signed by an untrusted key"
-    print(f"{env.msg_id.hex()} from {env.originator}, {len(env.body)} bytes, {sig}", flush=True)
-    text = _short_text(env.body)
-    if text is not None:
-        for line in text.splitlines():
-            print("  " + line, flush=True)
+def _save(d: Delivery, out: Path | None, say: Callable[[str], None]) -> None:
     if out:
         try:
-            (out / f"{env.msg_id.hex()}.bin").write_bytes(env.body)
+            (out / f"{d.envelope.msg_id.hex()}.bin").write_bytes(d.envelope.body)
         except OSError as e:
-            print(f"gossipmesh: could not save {env.msg_id.hex()}: {e}", file=sys.stderr)
+            say(f"could not save {d.envelope.msg_id.hex()}: {e}")
 
 
-def _short_text(body: bytes) -> str | None:
-    """The body as text, if it is short readable UTF-8."""
-    try:
-        text = body.decode("utf-8")
-    except UnicodeDecodeError:
-        return None
-    if len(text) > 500 or any(not c.isprintable() and c not in "\r\n\t" for c in text):
-        return None
-    return text
+def _report(d: Delivery, out: Path | None) -> None:
+    env = d.envelope
+    print(f"{env.msg_id.hex()} from {env.originator}, {len(env.body)} bytes, {signature_note(d)}")
+    text = short_text(env.body)
+    if text is not None:
+        for line in text.splitlines():
+            print("  " + line)
+    sys.stdout.flush()
+    _save(d, out, lambda s: print(f"gossipmesh: {s}", file=sys.stderr))
 
 
-def _node(args: argparse.Namespace) -> int:
+@dataclass
+class _Setup:
+    """What `node` and `tui` share: the station and everything around it."""
+
+    station: Station
+    connect: Callable[[], Link]
+    where: str
+    airtime: Callable[[int], float]
+    originate: Callable[[bytes, float], bytes]
+    log: FrameLog | None
+    blocklist: Blocklist | None
+    settings: list[str]
+
+
+def _setup(args: argparse.Namespace) -> _Setup:
     if args.relay_trusted_only and not args.trust:
         raise SystemExit("--relay-trusted-only needs --trust to know whose messages to relay")
     sc = Scenario(baud=args.baud, txdelay=args.txdelay, block=args.block)
@@ -90,24 +103,50 @@ def _node(args: argparse.Namespace) -> int:
     keys = _trust(args.trust) if args.trust else None
     if args.out:
         args.out.mkdir(parents=True, exist_ok=True)
-    station = Station(
-        args.call,
-        params,
-        keys=keys,
-        on_deliver=lambda d: _report(d, args.out),
-        relay_trusted_only=args.relay_trusted_only,
-    )
+    station = Station(args.call, params, keys=keys, relay_trusted_only=args.relay_trusted_only)
     key = load_signing_key(args.key) if args.key else None
-    link: Link
-    if args.kiss:
-        host, _, port = args.kiss.rpartition(":")
-        link = TcpLink(host or "127.0.0.1", int(port))
-    else:
-        link = SerialLink(args.serial, args.serial_baud)
+
+    def connect() -> Link:
+        if args.kiss:
+            host, _, port = args.kiss.rpartition(":")
+            return TcpLink(host or "127.0.0.1", int(port))
+        return SerialLink(args.serial, args.serial_baud)
+
+    def originate(body: bytes, now: float) -> bytes:
+        return station.originate(body, now, ttl=args.ttl, key=key)
+
+    where = args.kiss or f"{args.serial} at {args.serial_baud} baud"
+    settings = [
+        f"{args.block}-byte blocks at {args.baud} baud, messages kept {args.ttl:.0f} s",
+        f"Beacons every {args.beacon:.0f} s" if args.beacon else "Beacons off",
+        f"Signing with {args.key}" if args.key else "Messages sent unsigned",
+        f"Trusted keys from {args.trust}" if args.trust else "No trusted keys",
+        f"Blocklist file {args.blocklist}"
+        if args.blocklist
+        else "No blocklist file: blocks last until the node stops",
+        f"Frame log {args.log}" if args.log else "No frame log",
+        f"Outbox {args.outbox}" if args.outbox else "No outbox folder",
+        f"Received messages saved to {args.out}" if args.out else "Received messages not saved",
+    ]
+    return _Setup(
+        station,
+        connect,
+        where,
+        sc.airtime,
+        originate,
+        FrameLog(args.log) if args.log else None,
+        Blocklist(args.blocklist) if args.blocklist else None,
+        settings,
+    )
+
+
+def _node(args: argparse.Namespace) -> int:
+    s = _setup(args)
+    s.station.on_deliver = lambda d: _report(d, args.out)
+    link = s.connect()
 
     def send(body: bytes, now: float, source: str) -> None:
-        msg_id = station.originate(body, now, ttl=args.ttl, key=key)
-        print(f"{msg_id.hex()} sent from {source}", flush=True)
+        print(f"{s.originate(body, now).hex()} sent from {source}", flush=True)
 
     for f in args.send or []:
         send(f.read_bytes(), time.time(), str(f))
@@ -116,11 +155,61 @@ def _node(args: argparse.Namespace) -> int:
         if args.outbox
         else None
     )
-    print(f"{station.call} listening", flush=True)
-    log = FrameLog(args.log) if args.log else None
-    blocklist = Blocklist(args.blocklist) if args.blocklist else None
-    run(station, link, sc.airtime, log=log, blocklist=blocklist, outbox=outbox)
+    print(f"{s.station.call} listening", flush=True)
+    run(s.station, link, s.airtime, log=s.log, blocklist=s.blocklist, outbox=outbox)
     return 0
+
+
+def _tui(args: argparse.Namespace) -> int:
+    _tui_app(args).run()
+    return 0
+
+
+def _tui_app(args: argparse.Namespace) -> "NodeApp":
+    try:
+        from ._tui import NodeApp
+    except ModuleNotFoundError as e:
+        if e.name != "textual":
+            raise
+        raise RuntimeError("the TUI needs the tui extra: pip install gossipmesh[tui]") from e
+    s = _setup(args)
+    monitor = Monitor(s.station, s.originate, s.airtime, log=s.log, blocklist=s.blocklist)
+
+    def delivered(d: Delivery) -> None:
+        monitor.delivered(d)
+        _save(d, args.out, monitor.say)
+
+    s.station.on_deliver = delivered
+    if s.blocklist:
+        s.blocklist.say = monitor.say
+    outbox = (
+        Outbox(
+            args.outbox,
+            lambda body, now: monitor.send_now(body, now, str(args.outbox)),
+            say=monitor.say,
+        )
+        if args.outbox
+        else None
+    )
+    for f in args.send or []:
+        monitor.send_file(f)
+
+    def start(stop: threading.Event) -> None:
+        link = s.connect()
+        monitor.set_state("connected")
+        run(
+            s.station,
+            link,
+            s.airtime,
+            log=monitor,
+            blocklist=s.blocklist,
+            outbox=outbox,
+            tick=monitor.tick,
+            stop=stop,
+            say=monitor.say,
+        )
+
+    return NodeApp(monitor, start, s.where, s.settings)
 
 
 def _decode(args: argparse.Namespace) -> int:
@@ -165,33 +254,7 @@ def _keygen(args: argparse.Namespace) -> int:
     return 0
 
 
-def _parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(
-        prog="gossipmesh", description="Network-coded gossip for packet radio."
-    )
-    p.add_argument("--version", action="version", version=f"gossipmesh {__version__}")
-    sub = p.add_subparsers(dest="cmd", required=True)
-
-    s = sub.add_parser("sim", help="compare coded gossip with flooding and routed forwarding")
-    s.add_argument("--stations", type=int, default=20)
-    s.add_argument("--area", type=float, default=3.0, help="map side, in units of radio range")
-    s.add_argument("--loss", type=float, default=0.1, help="packet loss inside range (0-1)")
-    s.add_argument("--baud", type=int, default=1200)
-    s.add_argument("--txdelay", type=float, default=0.3, help="seconds of key-up per frame")
-    s.add_argument("--size", type=int, default=10_000, help="message body in bytes")
-    s.add_argument("--block", type=int, default=128, help="payload bytes per packet")
-    s.add_argument(
-        "--backoff",
-        type=float,
-        default=4.0,
-        help="random wait before answering a neighbour, in packet airtimes",
-    )
-    s.add_argument("--runs", type=int, default=5)
-    s.add_argument("--seed", type=int, default=1)
-    s.add_argument("--strategy", action="append", choices=STRATEGIES)
-    s.set_defaults(func=_sim)
-
-    n = sub.add_parser("node", help="run a station against a KISS TNC")
+def _node_options(n: argparse.ArgumentParser) -> None:
     n.add_argument("--call", required=True, type=_call, help="your callsign, e.g. N0CALL-1")
     tnc = n.add_mutually_exclusive_group(required=True)
     tnc.add_argument("--kiss", metavar="HOST:PORT", help="KISS over TCP, e.g. 127.0.0.1:8001")
@@ -234,7 +297,41 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="relay a message only after decoding it and checking it is signed by a trusted key",
     )
+
+
+def _parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="gossipmesh", description="Network-coded gossip for packet radio."
+    )
+    p.add_argument("--version", action="version", version=f"gossipmesh {__version__}")
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    s = sub.add_parser("sim", help="compare coded gossip with flooding and routed forwarding")
+    s.add_argument("--stations", type=int, default=20)
+    s.add_argument("--area", type=float, default=3.0, help="map side, in units of radio range")
+    s.add_argument("--loss", type=float, default=0.1, help="packet loss inside range (0-1)")
+    s.add_argument("--baud", type=int, default=1200)
+    s.add_argument("--txdelay", type=float, default=0.3, help="seconds of key-up per frame")
+    s.add_argument("--size", type=int, default=10_000, help="message body in bytes")
+    s.add_argument("--block", type=int, default=128, help="payload bytes per packet")
+    s.add_argument(
+        "--backoff",
+        type=float,
+        default=4.0,
+        help="random wait before answering a neighbour, in packet airtimes",
+    )
+    s.add_argument("--runs", type=int, default=5)
+    s.add_argument("--seed", type=int, default=1)
+    s.add_argument("--strategy", action="append", choices=STRATEGIES)
+    s.set_defaults(func=_sim)
+
+    n = sub.add_parser("node", help="run a station against a KISS TNC")
+    _node_options(n)
     n.set_defaults(func=_node)
+
+    t = sub.add_parser("tui", help="run a station with a live view in the terminal")
+    _node_options(t)
+    t.set_defaults(func=_tui)
 
     d = sub.add_parser("decode", help="recover the messages in a node's --log file")
     d.add_argument("log", type=Path)

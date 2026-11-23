@@ -10,6 +10,10 @@ what appears on its GitHub release page. Validated in CI by
 
 ### Added
 
+- `gossipmesh tui`: the node with a live view in the terminal, built on Textual (the new
+  `tui` extra). It shows messages in flight with their progress, decoded messages, neighbours
+  and airtime, sends typed text or files, blocks and unblocks messages, switches
+  trusted-only relaying, and follows the frame log.
 - `scripts/figures.py` reproduces every figure the README quotes, and `gossipmesh sim
   --backoff` sets the back-off.
 

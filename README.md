@@ -42,6 +42,9 @@ routed    105/190    13720   15818      1506.5          12001     20098       21
   forwarding.
 - `gossipmesh node`, which runs a station against a KISS TNC over TCP (Direwolf, UZ7HO
   soundmodem) or a serial port.
+- `gossipmesh tui`, the same station with a live view in the terminal: messages arriving
+  block by block, what it has decoded, its neighbours, its airtime, and controls for sending
+  and relaying.
 - Optional Ed25519 signatures. They prove who sent a message, and the content stays
   readable.
 - A short [prior-art survey](docs/prior-art.md).
@@ -52,9 +55,10 @@ routed    105/190    13720   15818      1506.5          12001     20098       21
 pip install "gossipmesh[all]"
 ```
 
-The `all` extra pulls in `cryptography` for signatures and `pyserial` for serial TNCs. Without
-it you get the simulator and KISS over TCP, with only numpy as a dependency. Python 3.10 or
-newer, on any OS.
+The `all` extra pulls in `cryptography` for signatures, `pyserial` for serial TNCs and
+`textual` for the terminal view. Without it you get the simulator and `gossipmesh node` over
+KISS TCP, with only numpy as a dependency. The extras can also be installed one at a time:
+`sign`, `serial` and `tui`. Python 3.10 or newer, on any OS.
 
 Every [GitHub release](https://github.com/Londopy/gossipmesh/releases/latest) also has the
 wheel and source archive, `SHA256SUMS.txt` with the SHA-256 of every file, and a torrent per
@@ -280,6 +284,33 @@ every station heard every other one. No radios were involved.
   low on that run, 2 of 85 frames, so the opening burst's 2 spare frames per generation
   covered it and nobody had to ask. 85 frames take about 125 seconds of airtime at
   1200 baud, so delivery came as soon as the burst ended.
+
+## Live view in the terminal
+
+```bash
+gossipmesh tui --call N0CALL-1 --kiss 127.0.0.1:8101 --log frames.log --blocklist blocked.txt
+```
+
+`gossipmesh tui` takes every option `gossipmesh node` does and runs the same station, with a
+view of what it is doing instead of lines of output. It works over SSH, which suits a node
+left by a radio. Its tabs:
+
+- **Messages:** every message in flight with how much of it has arrived ("40 of 64"), and the
+  messages decoded so far. Pick one to read it, or to block or unblock it.
+- **Send:** type a message or give the path of a file, and see what this node has sent.
+- **Neighbours:** every station heard, with when it was last heard and how many frames.
+- **Log:** every frame sent and heard, and every block, unblock and decode, as they happen.
+- **Relay:** switch trusted-only relaying on or off (it needs `--trust`), and see the
+  settings and the blocked messages.
+
+The line under the title counts frames and airtime sent and heard, and how much of the last
+10 minutes this node spent transmitting. Blocking from the view edits the `--blocklist` file
+when there is one, so the block survives a restart; without one it lasts until the node
+stops. Ctrl+Q quits, F5 reconnects after the TNC drops, and Tab moves between controls.
+The colours are the terminal's own: the view uses its light or dark variant to match the
+terminal when it sets `COLORFGBG`, or else the Windows or macOS setting. Elsewhere it assumes
+a dark terminal unless `COLORFGBG` says otherwise. Messages, notices and errors show on the
+line under the title, whichever tab is open, and in the Log tab.
 
 ## Signing
 

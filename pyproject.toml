@@ -29,8 +29,16 @@ classifiers = [
 [project.optional-dependencies]
 sign = ["cryptography>=50.0"]
 serial = ["pyserial>=3.5"]
-dev = ["pytest>=9.2", "hypothesis>=6.150", "ruff>=0.17", "mypy>=2.4", "types-pyserial>=3.5"]
-all = ["gossipmesh[sign,serial]"]
+tui = ["textual>=8.2"]
+dev = [
+    "pytest>=9.2",
+    "hypothesis>=6.150",
+    "ruff>=0.17",
+    "mypy>=2.4",
+    "types-pyserial>=3.5",
+    "textual>=8.2",
+]
+all = ["gossipmesh[sign,serial,tui]"]
 
 [project.scripts]
 gossipmesh = "gossipmesh._cli:main"

@@ -7,7 +7,7 @@ import pytest
 from gossipmesh import Params, Station
 from gossipmesh._ax25 import KissReader, kiss_wrap, parse_ui, ui_frame
 from gossipmesh._framelog import FrameLog, replay
-from gossipmesh._cli import _short_text
+from gossipmesh._monitor import short_text as _short_text
 from gossipmesh._node import Blocklist, Outbox, run
 from gossipmesh._baselines import UncodedNode
 from gossipmesh._sim import Scenario, channel, compare, place
