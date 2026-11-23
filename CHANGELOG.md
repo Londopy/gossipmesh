@@ -8,6 +8,8 @@ what appears on its GitHub release page. Validated in CI by
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-23
+
 ### Added
 
 - `gossipmesh tui`: the node with a live view in the terminal, built on Textual (the new
@@ -63,6 +65,7 @@ what appears on its GitHub release page. Validated in CI by
 - `docs/part97.md`: the US amateur rules that apply to unattended relaying, checked against
   the current eCFR text.
 
-[Unreleased]: https://github.com/Londopy/gossipmesh/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/Londopy/gossipmesh/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/Londopy/gossipmesh/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Londopy/gossipmesh/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Londopy/gossipmesh/releases/tag/v0.1.0
