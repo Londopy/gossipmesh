@@ -1,12 +1,13 @@
 import socket
 import sys
+import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol
 
 from ._ax25 import KissReader, kiss_wrap, parse_ui, ui_frame
-from ._framelog import FrameLog
+from ._framelog import FrameSink
 from ._station import Station
 
 
@@ -59,12 +60,38 @@ class SerialLink:
         return data
 
 
+def _stderr(text: str) -> None:
+    print(f"gossipmesh: {text}", file=sys.stderr, flush=True)
+
+
 class Blocklist:
     """Message ids not to relay, one hex id per line, re-read whenever the file changes."""
 
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, say: Callable[[str], None] = _stderr) -> None:
         self.path = path
+        self.say = say
         self._seen: tuple[int, int] | None = None
+
+    def add(self, msg_id: bytes) -> None:
+        self._rewrite([*self._lines(), msg_id.hex()])
+
+    def remove(self, msg_id: bytes) -> None:
+        """Drop every line naming msg_id, keeping the rest of the file as it was."""
+        lines = self._lines()
+        self._rewrite([ln for ln in lines if ln.split("#")[0].strip().lower() != msg_id.hex()])
+
+    def _lines(self) -> list[str]:
+        try:
+            return _read_text(self.path).splitlines()
+        except FileNotFoundError:
+            return []
+
+    def _rewrite(self, lines: list[str]) -> None:
+        # UTF-8 whatever the file was before, and via a temporary file, so the node loop never
+        # reads a half-written list
+        tmp = self.path.with_name(self.path.name + ".tmp")
+        tmp.write_text("".join(line + "\n" for line in lines), encoding="utf-8")
+        tmp.replace(self.path)
 
     def poll(self) -> set[bytes] | None:
         """Every id in the file if it changed since the last call, otherwise None."""
@@ -83,7 +110,7 @@ class Blocklist:
         try:
             text = _read_text(self.path)
         except OSError as e:
-            print(f"gossipmesh: {self.path}: {e}; keeping the previous blocklist", file=sys.stderr)
+            self.say(f"{self.path}: {e}; keeping the previous blocklist")
             return None
         for n, line in enumerate(text.splitlines(), 1):
             line = line.split("#")[0].strip()
@@ -91,7 +118,7 @@ class Blocklist:
                 if line:
                     ids.add(_msg_id(line))
             except ValueError:
-                print(f"gossipmesh: {self.path}:{n}: not a message id, ignored", file=sys.stderr)
+                self.say(f"{self.path}:{n}: not a message id, ignored")
         return ids
 
 
@@ -120,9 +147,12 @@ class Outbox:
     # editor swap files, Explorer and Finder droppings
     IGNORE = ("Thumbs.db", "desktop.ini")
 
-    def __init__(self, path: Path, send: Callable[[bytes, float], None]) -> None:
+    def __init__(
+        self, path: Path, send: Callable[[bytes, float], None], say: Callable[[str], None] = _stderr
+    ) -> None:
         self.path = path
         self.send = send
+        self.say = say
 
     def poll(self, now: float) -> None:
         for f in sorted(self.path.iterdir()):
@@ -137,26 +167,31 @@ class Outbox:
                 self.send(f.read_bytes(), now)
                 folder = "sent"
             except (OSError, ValueError) as e:
-                print(f"gossipmesh: {f}: not sent: {e}", file=sys.stderr, flush=True)
+                self.say(f"{f}: not sent: {e}")
                 folder = "failed"
             try:
                 (self.path / folder).mkdir(exist_ok=True)
                 f.replace(self.path / folder / f"{int(now)}-{f.name}")
             except OSError as e:
-                print(f"gossipmesh: {f}: could not move it to {folder}/: {e}", file=sys.stderr)
+                self.say(f"{f}: could not move it to {folder}/: {e}")
 
 
 def _apply_blocklist(
-    station: Station, before: set[bytes], now_blocked: set[bytes], now: float, log: FrameLog | None
+    station: Station,
+    before: set[bytes],
+    now_blocked: set[bytes],
+    now: float,
+    log: FrameSink | None,
+    say: Callable[[str], None],
 ) -> None:
     for msg_id in sorted(now_blocked - before):
         station.block(msg_id)
-        print(f"blocking {msg_id.hex()}", flush=True)
+        say(f"blocking {msg_id.hex()}")
         if log:
             log.note(now, "block", msg_id)
     for msg_id in sorted(before - now_blocked):
         station.unblock(msg_id)
-        print(f"unblocking {msg_id.hex()}", flush=True)
+        say(f"unblocking {msg_id.hex()}")
         if log:
             log.note(now, "unblock", msg_id)
 
@@ -166,27 +201,34 @@ def run(
     link: Link,
     airtime: Callable[[int], float],
     clock: Callable[[], float] = time.time,
-    log: FrameLog | None = None,
+    log: FrameSink | None = None,
     blocklist: Blocklist | None = None,
     outbox: Outbox | None = None,
+    tick: Callable[[float], None] | None = None,
+    stop: threading.Event | None = None,
+    say: Callable[[str], None] = lambda text: print(text, flush=True),
 ) -> None:
-    """Pass frames between the station and the TNC until the link fails.
+    """Pass frames between the station and the TNC until the link fails or stop is set.
 
     The TNC does carrier sense; this loop only holds back the next frame until the last one has
-    had time to go out, so the station decides what to send with fresh information.
+    had time to go out, so the station decides what to send with fresh information. tick runs
+    on every pass, in this thread, which is where anything else may touch the station.
     """
     reader = KissReader()
     hold_until = 0.0
-    blocked: set[bytes] = set()
-    while True:
+    # a reconnect starts a new loop on the same station, which may already block some ids
+    blocked = set(station.blocked)
+    while stop is None or not stop.is_set():
         data = link.recv()
         now = clock()
         ids = blocklist.poll() if blocklist else None
         if ids is not None:
-            _apply_blocklist(station, blocked, ids, now, log)
+            _apply_blocklist(station, blocked, ids, now, log, say)
             blocked = ids
         if outbox:
             outbox.poll(now)
+        if tick:
+            tick(now)
         for frame in reader.feed(data):
             ui = parse_ui(frame)
             if ui is not None:

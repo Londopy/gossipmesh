@@ -1,12 +1,19 @@
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Protocol
 
 from ._message import check_call
 from ._station import Delivery, Params, Station
 
 # replays never transmit, so this only needs to be a valid call nobody on air will use
 _REPLAY_CALL = "Q0LOG"
+
+
+class FrameSink(Protocol):
+    def write(self, now: float, direction: str, src: str, info: bytes) -> None: ...
+
+    def note(self, now: float, kind: str, msg_id: bytes) -> None: ...
 
 
 class FrameLog:

@@ -47,6 +47,20 @@ def jittered(wait: float, rng: random.Random) -> float:
     return wait * rng.uniform(0.75, 1.25)
 
 
+@dataclass(frozen=True)
+class MessageState:
+    """How much of one message a station holds, in blocks."""
+
+    msg_id: bytes
+    held: int
+    total: int
+    originated: bool
+
+    @property
+    def complete(self) -> bool:
+        return self.held == self.total
+
+
 @dataclass
 class Delivery:
     envelope: Envelope
@@ -135,6 +149,17 @@ class Station:
         self.delivered[msg_id] = Delivery(env, now, True if key is not None else None)
         self._schedule(now)
         return msg_id
+
+    def messages(self) -> list[MessageState]:
+        """Every message this station is holding or collecting."""
+        return [
+            MessageState(h.msg_id, sum(m.mine()), sum(h.gens), m.originated)
+            for h, m in self._msgs.items()
+        ]
+
+    @property
+    def blocked(self) -> frozenset[bytes]:
+        return frozenset(self._blocked)
 
     def block(self, msg_id: bytes) -> None:
         """Stop relaying a message and ignore it from now on."""
