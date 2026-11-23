@@ -181,7 +181,7 @@ decides when to transmit. Other implementations can do better and still interope
   hash per try). Sending the seeds of the packets it mixed plus one mixing byte each costs
   5 bytes per packet mixed, so with 32-block generations it only wins when a relay mixes six
   packets or fewer, which also makes its packets less likely to help. On the
-  default simulated map the vectors cost 4.7% of all airtime beyond what seeds would, which
+  default simulated map the vectors cost 4.6% of all airtime beyond what seeds would, which
   bounds what any compact form could save. Smaller generations shrink the vector. GF(2)
   vectors (4 bytes for 32 blocks) would cut it further, at the cost of about 1.6 extra
   packets per generation.

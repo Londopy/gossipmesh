@@ -26,12 +26,12 @@ def test_decodes_from_seeded_packets(k: int, size: int, seed: int) -> None:
     src = Generation.from_blocks(blocks)
     dst = Generation(k, size)
     sent = 0
-    while not dst.complete:
+    while not dst.complete and sent < k + 3:
         dst.add(*seeded(src, 0, (seed + sent) % 2**32))
         sent += 1
         assert dst.rank <= k
+    assert dst.complete, "the design target is about k + 2 packets"
     assert dst.blocks() == blocks
-    assert sent <= k + 5
 
 
 def test_relay_recodes_before_decoding() -> None:

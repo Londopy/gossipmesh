@@ -95,7 +95,7 @@ switched off: the same generations, timers, back-off and opening push. A data fr
 the sender's bitmap for that block's generation where a coded packet carries its rank, and a
 status carries bitmaps where Station's carries ranks. Neighbours resend the plain blocks a
 bitmap shows missing. Both reached every station on every map tried. Coding saved between
-a fifth and a third of the airtime, and the farthest station decoded a little sooner:
+18% and 33% of the airtime, and the farthest station decoded a little sooner:
 
 | Scenario | Coded airtime | Uncoded airtime | Coded / uncoded | Farthest decode, coded vs uncoded |
 |---|---|---|---|---|
@@ -107,50 +107,53 @@ a fifth and a third of the airtime, and the farthest station decoded a little so
 
 How big the saving is depends on the back-off, the random wait before a station answers a
 neighbour's deficit. Longer waits let stations overhear each other and skip redundant
-frames, which helps both strategies and helps uncoded more. Over 8 runs on the default map,
-with the back-off in units of one packet's airtime:
+frames, which helps both strategies and helps uncoded more. On the default map, 10 runs per
+row, with the back-off in units of one packet's airtime (`gossipmesh sim --backoff`):
 
 | Back-off | Coded airtime | Uncoded airtime | Coded / uncoded | Farthest decode, coded vs uncoded |
 |---|---|---|---|---|
-| 0.4 | 3,613 s | 7,419 s | 49% | 2,251 s vs 2,626 s |
-| 1 | 3,325 s | 5,784 s | 57% | 1,691 s vs 2,493 s |
-| 2 | 2,969 s | 4,166 s | 71% | 2,067 s vs 2,122 s |
-| **4 (default)** | 2,100 s | 2,876 s | 73% | 2,129 s vs 2,295 s |
-| 8 | 1,726 s | 2,123 s | 81% | 2,048 s vs 2,525 s |
-| 16 | 1,521 s | 1,794 s | 85% | 2,886 s vs 3,556 s |
+| 0.4 | 4,148 s | 8,114 s | 51% | 2,033 s vs 2,852 s |
+| 1 | 3,911 s | 6,733 s | 58% | 1,971 s vs 2,578 s |
+| 2 | 3,921 s | 5,605 s | 70% | 2,350 s vs 2,527 s |
+| **4 (default)** | 2,726 s | 4,047 s | 67% | 2,185 s vs 2,586 s |
+| 8 | 2,210 s | 2,470 s | 89% | 2,747 s vs 2,375 s |
+| 16 | 1,719 s | 2,010 s | 85% | 3,102 s vs 3,441 s |
 
-On the sparser `--area 4.0` map the two are within 7% of each other from a back-off of 8
-up, and uncoded reaches the farthest station sooner there. The default of 4 is a trade-off:
-at 8 the default map uses another fifth less airtime, but on the sparse map the farthest
-station then waits about a quarter longer. These are simulator results
-from a guessed loss model, so treat the exact figures with suspicion; the bench test below
-checks the protocol itself, not the comparison.
+Past 4 both strategies keep saving airtime and coding's lead shrinks to 10-15%, but the
+farthest station waits longer: at 8, coded's farthest decode on the default map took 2,747 s
+against 2,185 s at 4, and slower than uncoded's. The sparser `--area 4` map shows the same
+pattern, from 82% at 4 to 90% at 8 and 93% at 16. That is why the default is 4. These are
+simulator results from a guessed loss model, so treat the exact figures with suspicion; the
+bench test below checks the protocol itself, not the comparison.
 
 ### Against plain flooding
 
-Plain flooding is what Meshtastic does: each station repeats each block once, with no
-repair. On the default map it used a fifth of coded's airtime but reached no station at all:
-with 79 blocks, losing any one of them means failure. To see where flooding works, here is
-airtime per station reached on the default map, with the share of stations reached in
-brackets. `--loss` is the loss inside range; loss still rises toward the edge of range, and
-collisions still happen at 0. The 500-byte row is 30 runs per cell, the others 6.
+Plain flooding here means each station repeats each block once, with no repair. Meshtastic
+floods in a smarter way: a node skips its rebroadcast if it hears a neighbour rebroadcast
+first, a hop limit caps how far a packet goes, and a message is a single packet of at most
+239 bytes. The simulator models none of that, so treat this as plain flooding, not as
+Meshtastic. On the default map flooding used a fifth of coded's airtime but reached no station
+at all: with 79 blocks, losing any one of them means failure. To see where flooding works,
+here is airtime per station reached on the default map over 10 runs per cell, with the share
+of stations reached in brackets. `--loss` is the loss inside range; loss still rises toward
+the edge of range, and collisions still happen at 0.
 
 | Message | `--loss 0` | `--loss 0.02` | `--loss 0.05` | `--loss 0.1` |
 |---|---|---|---|---|
-| 500 bytes, 4 blocks, coded | 7.8 s (100%) | 8.0 s (97%) | 7.8 s (97%) | 8.6 s (97%) |
-| 500 bytes, 4 blocks, flood | 7.6 s (65%) | 8.0 s (61%) | 8.8 s (54%) | 9.7 s (47%) |
-| 2,000 bytes, 16 blocks, coded | 17.2 s (100%) | 17.0 s (100%) | 18.4 s (100%) | 19.1 s (100%) |
-| 2,000 bytes, 16 blocks, flood | 1,590 s (1%) | 1,584 s (1%) | none | none |
-| 10,000 bytes, 79 blocks, coded | 178 s (100%) | 191 s (100%) | 182 s (100%) | 154 s (100%) |
+| 500 bytes, 4 blocks, coded | 7.7 s (100%) | 8.4 s (100%) | 7.9 s (100%) | 9.7 s (100%) |
+| 500 bytes, 4 blocks, flood | 6.7 s (73%) | 8.2 s (56%) | 9.7 s (45%) | 9.9 s (44%) |
+| 2,000 bytes, 16 blocks, coded | 18.7 s (100%) | 18.1 s (100%) | 18.8 s (100%) | 20.0 s (100%) |
+| 2,000 bytes, 16 blocks, flood | 1,265 s (1%) | 1,257 s (1%) | none | none |
+| 10,000 bytes, 79 blocks, coded | 152 s (100%) | 161 s (100%) | 157 s (100%) | 144 s (100%) |
 | 10,000 bytes, 79 blocks, flood | none | none | none | none |
 
-For a message of a few blocks on a clean channel the two cost about the same per station
-reached, though flooding misses a third of the stations. From about 5% loss up, or from a
-couple of kilobytes up, coded gossip costs less per delivered message, and flooding soon
-delivers nothing at all. The coded misses in the 500-byte row are stations that heard no
-frame at all during the short opening burst, so never learned the message existed. On the
-air, beacons cover them; the simulator runs without beacons, and with them on, the same 30
-runs at 2% loss reach all 570 stations.
+So the airtime target fails in one corner. For a message of a few blocks on a perfectly
+clean channel, flooding spends less airtime per station it reaches, though it misses a
+quarter of them. At 2% loss the two cost about the same, and from 5% loss up, or from a
+couple of kilobytes up, coded gossip costs less per delivered message while flooding soon
+delivers nothing at all. Over more runs a few coded stations miss a 500-byte message too:
+stations that heard nothing during the short opening burst, so never learned it existed. On
+the air, beacons reach them; the simulator runs without beacons.
 
 ### Routed forwarding
 
@@ -165,8 +168,8 @@ almost nine times coded's airtime and taking 15 times as long. Flooding reached 
 
 The design target was about K + 2 packets to decode K blocks. The code alone does better.
 Over 2,000 generations each of 8, 16 and 32 blocks, built from random seeded packets, a
-generation needed one extra packet 0.2% to 0.6% of the time and never two. On average that
-is about K + 0.004.
+generation needed one extra packet 0.2% to 0.55% of the time and never two. On average that
+is between K + 0.002 and K + 0.006.
 
 On a network, stations hear more than they need, because several neighbours send at once and
 their mixes overlap. That is the heard/block column above: 1.54 for coded gossip on the
@@ -175,9 +178,24 @@ default map, 2.50 for the same protocol uncoded, and 1.35 and 2.13 at 9600 baud.
 One part of the design could not be met as planned. Packets carry a 4-byte seed instead of
 their coefficients only when the sender holds the whole generation. A relay that has not
 decoded yet sends a mix of mixes, which a seed can almost never describe, so it sends the
-coefficient vector: up to 32 bytes. On the default map those vectors cost 4.7% of all airtime beyond
-what a seed would, which is the most any compact form could win back.
+coefficient vector: up to 32 bytes. Over 10 runs on the default map those vectors cost 4.6%
+of all airtime beyond what a seed would, which is the most any compact form could win back.
 [docs/protocol.md](docs/protocol.md#known-limits) has the details.
+
+### Reproducing these numbers
+
+Every run is seeded, so these commands print the numbers above:
+
+```bash
+gossipmesh sim --runs 10
+gossipmesh sim --runs 10 --baud 9600 --txdelay 0.1 --block 256
+gossipmesh sim --runs 30 --area 3.5 --strategy coded --strategy uncoded
+gossipmesh sim --runs 10 --loss 0.3 --strategy coded --strategy uncoded
+python scripts/figures.py backoff
+python scripts/figures.py flood
+python scripts/figures.py decode
+python scripts/figures.py vectors
+```
 
 The simulator's channel access was corrected after the bench test below showed how
 Direwolf behaves.

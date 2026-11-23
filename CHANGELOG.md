@@ -8,6 +8,17 @@ what appears on its GitHub release page. Validated in CI by
 
 ## [Unreleased]
 
+### Added
+
+- `scripts/figures.py` reproduces every figure the README quotes, and `gossipmesh sim
+  --backoff` sets the back-off.
+
+### Fixed
+
+- The README's back-off table used a different seed and run count from the headline
+  comparison, and the flooding table mixed run counts; both are regenerated from the same
+  seeded runs. The description of Meshtastic's flooding now matches its documentation.
+
 ## [0.2.0] - 2026-11-19
 
 ### Added

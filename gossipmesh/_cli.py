@@ -21,6 +21,7 @@ def _sim(args: argparse.Namespace) -> int:
         txdelay=args.txdelay,
         size=args.size,
         block=args.block,
+        backoff=args.backoff,
     )
     strategies = tuple(args.strategy or STRATEGIES)
     print(report(compare(sc, args.runs, args.seed, strategies)))
@@ -179,6 +180,12 @@ def _parser() -> argparse.ArgumentParser:
     s.add_argument("--txdelay", type=float, default=0.3, help="seconds of key-up per frame")
     s.add_argument("--size", type=int, default=10_000, help="message body in bytes")
     s.add_argument("--block", type=int, default=128, help="payload bytes per packet")
+    s.add_argument(
+        "--backoff",
+        type=float,
+        default=4.0,
+        help="random wait before answering a neighbour, in packet airtimes",
+    )
     s.add_argument("--runs", type=int, default=5)
     s.add_argument("--seed", type=int, default=1)
     s.add_argument("--strategy", action="append", choices=STRATEGIES)

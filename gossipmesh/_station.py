@@ -37,9 +37,9 @@ class Params:
     beacon: float = 600.0
 
     @classmethod
-    def for_packet_time(cls, airtime: float, **kw: Any) -> "Params":
-        """Timers scaled to how long one coded packet takes on air."""
-        return cls(backoff=4 * airtime, quiet=20 * airtime, **kw)
+    def for_packet_time(cls, airtime: float, backoff: float = 4.0, **kw: Any) -> "Params":
+        """Timers scaled to how long one coded packet takes on air; backoff is in packet times."""
+        return cls(backoff=backoff * airtime, quiet=20 * airtime, **kw)
 
 
 def jittered(wait: float, rng: random.Random) -> float:

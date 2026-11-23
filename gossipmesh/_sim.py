@@ -54,6 +54,7 @@ class Scenario:
     dcd: float = 0.1
     size: int = 10_000
     block: int = 128
+    backoff: float = 4.0
     limit: float = 6 * 3600
 
     def airtime(self, nbytes: int) -> float:
@@ -143,7 +144,9 @@ def _build(
     packed = Envelope(calls[0], int(sc.limit * 2), body).pack()
     blocks = [b for g in split(packed, sc.block) for b in g]
     # no beacons: they only help stations that join late, and every simulated one is there
-    params = Params.for_packet_time(sc.airtime(sc.block + 40), block_size=sc.block, beacon=0.0)
+    params = Params.for_packet_time(
+        sc.airtime(sc.block + 40), sc.backoff, block_size=sc.block, beacon=0.0
+    )
     if strategy == "coded":
         coded = [_CodedNode(Station(c, params, random.Random(rng.random()))) for c in calls]
         coded[0].msg_id = coded[0].station.originate(body, 0.0, ttl=sc.limit * 2)
