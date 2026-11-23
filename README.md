@@ -205,7 +205,9 @@ Direwolf behaves.
 Run two or three Direwolf instances, each with its own `MYCALL`, `KISSPORT` and `AGWPORT`.
 Connect their audio through loopback, for example with a virtual audio cable, or wire the
 radios into dummy loads. A Direwolf config for one station on a shared virtual cable looks
-like this (`ADEVICE` takes the input and output device numbers Direwolf lists at startup):
+like this. `ADEVICE` takes the input and output device numbers Direwolf lists at startup;
+Windows can renumber them after a reboot or when a headset connects, so check the list
+again if the modems stop hearing each other.
 
 ```
 ADEVICE 1 4
@@ -213,18 +215,23 @@ ACHANNELS 1
 CHANNEL 0
 MYCALL N0CALL-1
 MODEM 1200
-KISSPORT 8001
-AGWPORT 8000
+KISSPORT 8101
+AGWPORT 8100
 ```
+
+Give every instance its own pair of ports, and keep them away from 8001. On the bench,
+Direwolf 1.8.1 also opened its default KISS port 8001 alongside the configured one, so
+whichever instance started first took 8001, and a node pointed at 8001 could end up on the
+wrong modem.
 
 Then start one node per Direwolf:
 
 ```bash
-gossipmesh node --call N0CALL-1 --kiss 127.0.0.1:8001 --out received --send notes.txt
+gossipmesh node --call N0CALL-1 --kiss 127.0.0.1:8101 --out received --send notes.txt
 ```
 
 ```bash
-gossipmesh node --call N0CALL-2 --kiss 127.0.0.1:8011 --out received2
+gossipmesh node --call N0CALL-2 --kiss 127.0.0.1:8111 --out received2
 ```
 
 Each node prints a line when it decodes a message, followed by the text itself when the
